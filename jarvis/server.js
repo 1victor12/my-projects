@@ -208,7 +208,7 @@ async function ollamaChat(messages) {
   const r = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: process.env.OLLAMA_MODEL || 'llama3.2', messages, stream: false }),
+    body: JSON.stringify({ model: process.env.OLLAMA_MODEL || 'llama3.2:1b', messages, stream: false }),
     signal: AbortSignal.timeout(120000)
   });
   if (!r.ok) throw new Error(`ollama ${r.status}`);
