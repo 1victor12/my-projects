@@ -108,15 +108,87 @@
     main { grid-template-columns: 1fr; }
     .column { max-height: 60vh; }
   }
+  .hdr-right { display: flex; align-items: center; gap: 10px; }
+  .user-badge { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); padding: 7px 12px; border-radius: 10px; }
+  .user-badge b { color: var(--accent-2); }
+  .mini-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 6px; }
+  .mini-btn:hover { color: var(--red); }
+  #installBtn, #loginBtnTop {
+    background: linear-gradient(135deg, var(--accent), #8f7bff); color: white; border: none;
+    padding: 9px 16px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: filter .15s;
+  }
+  #installBtn:hover, #loginBtnTop:hover { filter: brightness(1.15); }
+  #installBtn { display: none; }
+  #installBtn.show { display: inline-block; }
+  #syncState { font-size: 11px; color: var(--muted); min-width: 60px; text-align: center; }
+  .overlay {
+    position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+    background: rgba(10, 12, 18, .82); backdrop-filter: blur(6px);
+  }
+  .auth-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+    padding: 34px 30px; width: min(92vw, 380px); box-shadow: 0 24px 80px rgba(0,0,0,.6);
+    animation: pop .25s ease;
+  }
+  .auth-card h2 { font-size: 20px; margin-bottom: 4px; display: flex; align-items: center; gap: 10px; }
+  .auth-sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+  .auth-field { margin-bottom: 12px; }
+  .auth-field label { display: block; font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .auth-field input {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: 12px 14px; border-radius: 10px; font-size: 14px; outline: none; transition: border-color .2s;
+  }
+  .auth-field input:focus { border-color: var(--accent); }
+  .auth-main-btn {
+    width: 100%; background: linear-gradient(135deg, var(--accent), #8f7bff); color: white; border: none;
+    padding: 13px; border-radius: 10px; font-size: 14.5px; font-weight: 700; cursor: pointer; margin-top: 8px;
+    transition: filter .15s, transform .1s;
+  }
+  .auth-main-btn:hover { filter: brightness(1.12); }
+  .auth-main-btn:active { transform: scale(.985); }
+  .auth-alt { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; font-size: 13px; color: var(--muted); }
+  .link-btn { background: none; border: none; color: var(--accent-2); cursor: pointer; font-size: 13px; padding: 0; }
+  .link-btn:hover { text-decoration: underline; }
+  .auth-err { color: var(--red); font-size: 13px; min-height: 18px; margin-top: 10px; }
 </style>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#171a23">
 </head>
 <body>
 
+<div class="overlay" id="authOverlay" style="display:none">
+  <div class="auth-card">
+    <h2><span class="logo-dot"></span><span id="authTitle">Welcome back</span></h2>
+    <div class="auth-sub">Sign in so your board is waiting for you — on any device.</div>
+    <div class="auth-field">
+      <label>Username</label>
+      <input id="authUser" type="text" maxlength="20" autocomplete="username">
+    </div>
+    <div class="auth-field">
+      <label>Password</label>
+      <input id="authPass" type="password" maxlength="72" autocomplete="current-password">
+    </div>
+    <button class="auth-main-btn" id="authGo">Sign in</button>
+    <div class="auth-err" id="authErr"></div>
+    <div class="auth-alt">
+      <span id="authSwitchWrap"><span id="authSwitchText">New here?</span> <button class="link-btn" id="authSwitch">Create account</button></span>
+      <button class="link-btn" id="guestBtn">Continue as guest</button>
+    </div>
+  </div>
+</div>
+
 <header>
   <div class="logo"><span class="logo-dot"></span>FlowBoard</div>
-  <div class="search-wrap">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-    <input id="search" type="text" placeholder="Search cards...">
+  <div class="hdr-right">
+    <span id="syncState"></span>
+    <div class="user-badge" id="userBadge" style="display:none"><b id="userName"></b><button class="mini-btn" id="logoutBtn" title="Log out">✕</button></div>
+    <button id="loginBtnTop">Sign in</button>
+    <button id="installBtn">Install App</button>
+    <div class="search-wrap">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="search" type="text" placeholder="Search cards...">
+    </div>
   </div>
 </header>
 
@@ -131,13 +203,21 @@ const COLUMNS = [
   { id: 'done', label: 'Done', dot: '#00b894' }
 ];
 const STORE_KEY = 'flowboard.v1';
-let state = load();
+const AUTH_KEY = 'flowboard.auth';
+const $ = id => document.getElementById(id);
+let state = loadLocal();
+let auth = null;
+try { auth = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch {}
+let query = '';
 
-function load() {
+function loadLocal() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
+  return sampleBoard();
+}
+function sampleBoard() {
   return {
     todo: [
       { id: crypto.randomUUID(), text: 'Welcome! Drag me to another column 👋', created: Date.now() },
@@ -147,82 +227,109 @@ function load() {
     done: []
   };
 }
-function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function isEmptyBoard(b) {
+  return !b || (!b.todo.length && !b.doing.length && !b.done.length);
+}
 
-const board = document.getElementById('board');
-const searchEl = document.getElementById('search');
-let query = '';
+let syncT = null;
+function save() {
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  if (auth) {
+    $('syncState').textContent = 'saving…';
+    clearTimeout(syncT);
+    syncT = setTimeout(syncNow, 500);
+  }
+}
+async function syncNow() {
+  try {
+    const r = await fetch('/api/board', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Token': auth.token },
+      body: JSON.stringify(state)
+    });
+    if (r.status === 401) return logout();
+    if (!r.ok) throw 0;
+    $('syncState').textContent = 'saved ✓';
+  } catch {
+    $('syncState').textContent = 'offline';
+  }
+}
+function api(path, opts = {}) {
+  opts.headers = Object.assign({ 'X-Token': (auth && auth.token) || '' }, opts.headers || {});
+  return fetch(path, opts).then(async r => {
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    return d;
+  });
+}
+
+const board = $('board');
+const searchEl = $('search');
+
+function cardEl(colId, card) {
+  const el = document.createElement('article');
+  el.className = 'card';
+  el.draggable = true;
+  el.dataset.id = card.id;
+  el.dataset.col = colId;
+  el.dataset.text = card.text.toLowerCase();
+  const d = new Date(card.created);
+  el.innerHTML = `
+    <div class="card-text" contenteditable="true" spellcheck="false"></div>
+    <div class="card-meta">
+      <span class="card-date">${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+      <button class="del-btn" title="Delete card">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0l1 14h8l1-14"/></svg>
+      </button>
+    </div>`;
+  const txt = el.querySelector('.card-text');
+  txt.textContent = card.text;
+  txt.addEventListener('blur', () => {
+    const v = txt.textContent.trim();
+    if (v) { card.text = v; } else if (confirm('Empty card — delete it?')) { removeCard(colId, card.id); return; }
+    txt.textContent = card.text;
+    el.dataset.text = card.text.toLowerCase();
+    save();
+  });
+  txt.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); txt.blur(); }
+    if (e.key === 'Escape') { txt.textContent = card.text; txt.blur(); }
+  });
+  el.querySelector('.del-btn').addEventListener('click', () => removeCard(colId, card.id));
+  el.addEventListener('dragstart', e => {
+    e.dataTransfer.setData('text/plain', JSON.stringify({ from: colId, id: card.id }));
+    e.dataTransfer.effectAllowed = 'move';
+    requestAnimationFrame(() => el.classList.add('dragging'));
+  });
+  el.addEventListener('dragend', () => el.classList.remove('dragging'));
+  return el;
+}
 
 function render() {
-  board.innerHTML = '';
+  const frag = document.createDocumentFragment();
   let total = 0;
   for (const col of COLUMNS) {
-    const cards = state[col.id].filter(c => c.text.toLowerCase().includes(query));
     total += state[col.id].length;
-
     const colEl = document.createElement('section');
     colEl.className = 'column';
     colEl.dataset.colId = col.id;
     colEl.innerHTML = `
       <div class="column-head">
         <div class="column-title"><span class="dot" style="background:${col.dot}"></span>${col.label}</div>
-        <span class="count">${cards.length}</span>
+        <span class="count">0</span>
       </div>
       <div class="cards" data-drop="${col.id}"></div>
       <form class="add-form">
         <input class="add-input" type="text" placeholder="Add a card..." maxlength="200" data-add="${col.id}">
         <button class="add-btn" type="submit">+</button>
       </form>`;
-    board.appendChild(colEl);
-
+    frag.appendChild(colEl);
     const list = colEl.querySelector('.cards');
+    for (const card of state[col.id]) list.appendChild(cardEl(col.id, card));
 
-    if (!cards.length) {
-      list.innerHTML = '<div class="empty">' + (query ? 'No matches' : 'Drop cards here') + '</div>';
-    }
-
-    for (const card of cards) {
-      const el = document.createElement('article');
-      el.className = 'card';
-      el.draggable = true;
-      el.dataset.id = card.id;
-      const d = new Date(card.created);
-      el.innerHTML = `
-        <div class="card-text" contenteditable="true" spellcheck="false"></div>
-        <div class="card-meta">
-          <span class="card-date">${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-          <button class="del-btn" title="Delete card">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0l1 14h8l1-14"/></svg>
-          </button>
-        </div>`;
-      const txt = el.querySelector('.card-text');
-      txt.textContent = card.text;
-      txt.addEventListener('blur', () => {
-        const v = txt.textContent.trim();
-        if (v) { card.text = v; } else if (confirm('Empty card — delete it?')) { removeCard(col.id, card.id); return; }
-        save();
-        txt.textContent = card.text;
-      });
-      txt.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); txt.blur(); }
-        if (e.key === 'Escape') { txt.textContent = card.text; txt.blur(); }
-      });
-      el.querySelector('.del-btn').addEventListener('click', () => removeCard(col.id, card.id));
-
-      el.addEventListener('dragstart', e => {
-        e.dataTransfer.setData('text/plain', JSON.stringify({ from: col.id, id: card.id }));
-        e.dataTransfer.effectAllowed = 'move';
-        requestAnimationFrame(() => el.classList.add('dragging'));
-      });
-      el.addEventListener('dragend', () => el.classList.remove('dragging'));
-
-      list.appendChild(el);
-    }
-
-    const dropzone = colEl.querySelector('.cards');
-    dropzone.parentElement.addEventListener('dragover', e => { e.preventDefault(); colEl.classList.add('drag-over'); });
-    dropzone.parentElement.addEventListener('dragleave', e => { if (!colEl.contains(e.relatedTarget)) colEl.classList.remove('drag-over'); });
-    dropzone.parentElement.addEventListener('drop', e => {
+    colEl.addEventListener('dragover', e => { e.preventDefault(); colEl.classList.add('drag-over'); });
+    colEl.addEventListener('dragleave', e => { if (!colEl.contains(e.relatedTarget)) colEl.classList.remove('drag-over'); });
+    colEl.addEventListener('drop', e => {
       e.preventDefault();
       colEl.classList.remove('drag-over');
       try {
@@ -237,18 +344,57 @@ function render() {
       const v = input.value.trim();
       if (!v) return;
       state[col.id].push({ id: crypto.randomUUID(), text: v, created: Date.now() });
-      save(); render();
-      board.querySelector(`[data-col-id="${col.id}"] .cards`).scrollTo({ top: 99999, behavior: 'smooth' });
+      input.value = '';
+      list.appendChild(cardEl(col.id, state[col.id][state[col.id].length - 1]));
+      updateCounts();
+      save();
+      list.scrollTo({ top: 99999, behavior: 'smooth' });
     });
   }
+  board.replaceChildren(frag);
+  applyFilter(true);
+  updateStats(total);
+}
 
-  document.getElementById('stats').textContent =
-    `${total} card${total === 1 ? '' : 's'} · saved locally`;
+function updateCounts() {
+  let total = 0;
+  for (const colEl of board.children) {
+    const id = colEl.dataset.colId;
+    total += state[id].length;
+    const vis = [...colEl.querySelectorAll('.card')].filter(c => c.style.display !== 'none').length;
+    colEl.querySelector('.count').textContent = vis;
+  }
+  updateStats(total);
+}
+function updateStats(total) {
+  $('stats').textContent = `${total} card${total === 1 ? '' : 's'} · ${auth ? 'synced to ' + auth.user : 'saved locally'}`;
+}
+
+function applyFilter(full) {
+  for (const colEl of board.children) {
+    let vis = 0;
+    const cards = colEl.querySelectorAll('.card');
+    const list = colEl.querySelector('.cards');
+    let empty = list.querySelector('.empty');
+    for (const c of cards) {
+      const show = !query || c.dataset.text.includes(query);
+      c.style.display = show ? '' : 'none';
+      if (show) vis++;
+    }
+    if (vis === 0 && cards.length === 0 && !(full && query)) {
+      if (!empty) { empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = 'Drop cards here'; list.appendChild(empty); }
+    } else if (vis === 0 && query && cards.length > 0) {
+      if (!empty) { empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = 'No matches'; list.appendChild(empty); }
+    } else if (empty) empty.remove();
+    colEl.querySelector('.count').textContent = vis;
+  }
 }
 
 function removeCard(colId, id) {
   state[colId] = state[colId].filter(c => c.id !== id);
-  save(); render();
+  const el = board.querySelector(`.card[data-id="${id}"]`);
+  if (el) el.remove();
+  save(); updateCounts();
 }
 
 function moveCard(from, to, id) {
@@ -260,15 +406,113 @@ function moveCard(from, to, id) {
   save(); render();
 }
 
-searchEl.addEventListener('input', () => { query = searchEl.value.trim().toLowerCase(); render(); });
+searchEl.addEventListener('input', () => {
+  query = searchEl.value.trim().toLowerCase();
+  applyFilter();
+});
 
-document.getElementById('clear').addEventListener('click', () => {
+$('clear').addEventListener('click', () => {
   if (!confirm('Delete ALL cards on the board?')) return;
   state = { todo: [], doing: [], done: [] };
   save(); render();
 });
 
+function setAuthed(name) {
+  $('userBadge').style.display = '';
+  $('userName').textContent = name;
+  $('loginBtnTop').style.display = 'none';
+  $('authOverlay').style.display = 'none';
+  updateCounts();
+}
+function logout() {
+  localStorage.removeItem(AUTH_KEY);
+  location.reload();
+}
+$('logoutBtn').addEventListener('click', logout);
+
+let mode = 'login';
+function openAuth(m) {
+  mode = m;
+  $('authTitle').textContent = m === 'login' ? 'Welcome back' : 'Create your account';
+  $('authGo').textContent = m === 'login' ? 'Sign in' : 'Sign up';
+  $('authSwitchText').textContent = m === 'login' ? 'New here?' : 'Already have an account?';
+  $('authSwitch').textContent = m === 'login' ? 'Create account' : 'Sign in instead';
+  $('authErr').textContent = '';
+  $('authOverlay').style.display = '';
+  $('authUser').focus();
+}
+$('loginBtnTop').addEventListener('click', () => openAuth('login'));
+$('authSwitch').addEventListener('click', () => openAuth(mode === 'login' ? 'register' : 'login'));
+$('guestBtn').addEventListener('click', () => { $('authOverlay').style.display = 'none'; });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('authOverlay').style.display = 'none'; });
+
+$('authGo').addEventListener('click', async () => {
+  const u = $('authUser').value.trim();
+  const pw = $('authPass').value;
+  $('authGo').disabled = true;
+  $('authErr').textContent = '';
+  try {
+    const d = await api('/api/' + mode, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ u, pw })
+    });
+    auth = { token: d.token, user: d.user };
+    localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+    setAuthed(d.user);
+    const remote = await api('/api/board');
+    if (remote && !isEmptyBoard(remote)) {
+      state = remote;
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      render();
+    } else if (!isEmptyBoard(state)) {
+      await syncNow();
+    }
+    $('syncState').textContent = 'saved ✓';
+  } catch (e) {
+    $('authErr').textContent = e.message;
+  } finally {
+    $('authGo').disabled = false;
+  }
+});
+$('authPass').addEventListener('keydown', e => { if (e.key === 'Enter') $('authGo').click(); });
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+let installEv = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installEv = e;
+  $('installBtn').classList.add('show');
+});
+$('installBtn').addEventListener('click', async () => {
+  if (!installEv) return;
+  installEv.prompt();
+  await installEv.userChoice;
+  installEv = null;
+  $('installBtn').classList.remove('show');
+});
+
 render();
+(async () => {
+  if (!auth) { openAuth('login'); return; }
+  try {
+    const me = await api('/api/me');
+    setAuthed(me.user);
+    const remote = await api('/api/board');
+    if (remote && !isEmptyBoard(remote)) {
+      state = remote;
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      render();
+    } else if (!isEmptyBoard(state)) {
+      await syncNow();
+    } else {
+      $('syncState').textContent = 'saved ✓';
+    }
+  } catch {
+    auth = null;
+    openAuth('login');
+  }
+})();
 </script>
 </body>
 </html>
