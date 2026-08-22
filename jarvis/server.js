@@ -87,6 +87,101 @@ async function sysInfo() {
     Write-Output "CPU $cpu percent. RAM $usedGB of $totGB gigabytes. $b. Uptime $up hours."`);
 }
 
+async function openWebsite(url) {
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  try { new URL(url); } catch { throw new Error(`Invalid URL: ${url}`); }
+  await ps(`Start-Process '${url.replace(/'/g, "''")}'`);
+  return `Opening ${url}`;
+}
+
+async function searchFiles(name) {
+  const out = await ps(`
+    $dirs = @("$env:USERPROFILE\\Desktop","$env:USERPROFILE\\Documents","$env:USERPROFILE\\Downloads")
+    $pat = "*${name.replace(/'/g, "''")}*"
+    $hits = Get-ChildItem $dirs -Recurse -Filter $pat -File -ErrorAction SilentlyContinue | Select-Object -First 10 -ExpandProperty FullName
+    if ($hits) { $hits } else { Write-Output 'NO_MATCHES' }`);
+  return out === 'NO_MATCHES' ? `No files matching "${name}" found in Desktop, Documents or Downloads.` :
+    `Found:\n${out.split('\n').map(f => '- ' + f.trim()).join('\n')}`;
+}
+
+async function lockPC() {
+  await ps('rundll32.exe user32.dll,LockWorkStation');
+  return 'Locking your workstation, sir.';
+}
+
+async function restartPC() {
+  await ps('Restart-Computer -Force');
+  return 'Restarting';
+}
+
+async function clipboardOp(action, text) {
+  if (action === 'get') {
+    const out = await ps('Get-Clipboard | Out-String');
+    return out ? `Clipboard contains:\n${out}` : 'Clipboard is empty.';
+  }
+  await ps(`Set-Clipboard -Value '${(text || '').replace(/'/g, "''")}'`);
+  return 'Copied to clipboard.';
+}
+
+const MEDIA_KEYS = { play: 179, pause: 179, next: 176, previous: 177, stop: 178 };
+async function media(action) {
+  const key = MEDIA_KEYS[action];
+  if (!key) throw new Error(`Unknown media action: ${action}`);
+  await ps(`(New-Object -ComObject WScript.Shell).SendKeys([char]${key}); 'ok'`);
+  return action === 'next' ? 'Skipping to next track' : action === 'previous' ? 'Previous track' : action === 'stop' ? 'Playback stopped' : 'Toggling playback';
+}
+
+async function brightness(level) {
+  const n = Math.max(0, Math.min(100, parseInt(level, 10)));
+  await ps(`(Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,${n})`);
+  return `Brightness set to ${n} percent`;
+}
+
+async function wifiInfo() {
+  return await ps(`
+    $o = netsh wlan show interfaces | Select-String 'SSID|Signal|State'
+    Write-Output ($o -join '. ')`);
+}
+
+async function listProcesses() {
+  return await ps(`
+    Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Name,@{n='MB';e={[math]::Round($_.WorkingSet64/1MB)}} |
+    ForEach-Object { Write-Output "$($_.Name) $($_.MB)MB" }`);
+}
+
+async function killProcess(name) {
+  const clean = name.replace(/\.(exe|EXE)$/, '');
+  const out = await ps(`$p = Get-Process -Name '${clean.replace(/'/g, "''")}' -ErrorAction SilentlyContinue; if ($p) { $p | Stop-Process -Force; Write-Output 'KILLED' } else { Write-Output 'NOT_FOUND' }`);
+  if (out === 'NOT_FOUND') throw new Error(`No running process named "${name}"`);
+  return `${clean} has been terminated.`;
+}
+
+const REMINDERS_FILE = path.join(ROOT, 'reminders.json');
+function loadReminders() {
+  try { return JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf8')); } catch { return []; }
+}
+function saveReminders(list) {
+  fs.writeFileSync(REMINDERS_FILE, JSON.stringify(list, null, 2));
+}
+
+async function addReminder(text, minutes) {
+  const list = loadReminders();
+  const mins = Math.max(0.1, parseFloat(minutes) || 5);
+  const r = { id: Date.now(), text, due: Date.now() + mins * 60000 };
+  list.push(r);
+  saveReminders(list);
+  const label = mins < 1 ? `${Math.round(mins * 60)} seconds` : `${mins} minute${mins > 1 ? 's' : ''}`;
+  return `Reminder set: "${text}" in ${label}, sir.`;
+}
+
+function checkReminders() {
+  const list = loadReminders();
+  const now = Date.now();
+  const due = list.filter(r => r.due <= now);
+  if (due.length) saveReminders(list.filter(r => r.due > now));
+  return due.map(r => `Reminder: ${r.text}`);
+}
+
 async function weather(city) {
   const url = `https://wttr.in/${encodeURIComponent(city || '')}?format=j1`;
   const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
@@ -126,6 +221,20 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
 
       if (p === '/api/open') return json(res, 200, { reply: await openApp(body.app) });
+      if (p === '/api/website') return json(res, 200, { reply: await openWebsite(body.url) });
+      if (p === '/api/find') return json(res, 200, { reply: await searchFiles(body.name) });
+      if (p === '/api/lock') return json(res, 200, { reply: await lockPC() });
+      if (p === '/api/restart') {
+        if (body.confirm !== 'yes-jarvis-restart') return json(res, 400, { error: 'Missing confirm token' });
+        return json(res, 200, { reply: await restartPC() });
+      }
+      if (p === '/api/clipboard') return json(res, 200, { reply: await clipboardOp(body.action, body.text) });
+      if (p === '/api/media') return json(res, 200, { reply: await media(body.action) });
+      if (p === '/api/brightness') return json(res, 200, { reply: await brightness(body.level) });
+      if (p === '/api/wifi') return json(res, 200, { reply: await wifiInfo() });
+      if (p === '/api/processes') return json(res, 200, { reply: await listProcesses() });
+      if (p === '/api/kill') return json(res, 200, { reply: await killProcess(body.name) });
+      if (p === '/api/remind') return json(res, 200, { reply: await addReminder(body.text, body.minutes) });
       if (p === '/api/volume') return json(res, 200, { reply: await volume(body.action, body.level) });
       if (p === '/api/screenshot') return json(res, 200, { reply: await screenshot() });
       if (p === '/api/sysinfo') return json(res, 200, { reply: await sysInfo() });
@@ -148,6 +257,10 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && p === '/api/weather') {
       return json(res, 200, { reply: await weather(q.get('city')) });
+    }
+
+    if (req.method === 'GET' && p === '/api/reminders') {
+      return json(res, 200, { due: checkReminders() });
     }
 
     if (p.endsWith('/')) p += 'index.html';

@@ -219,7 +219,44 @@ async function handle(raw) {
     else if (/date|day is it|today's date/.test(t))
       reply = `Today is ${new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`;
 
+    else if ((m = t.match(/^(?:go to |visit )((?:https?:\/\/)?[\w-]+\.[a-z]{2,}(?:\/\S*)?)$/i)))
+      reply = await api('/api/website', { url: m[1] });
+    else if ((m = t.match(/^open (.+)$/)) && /[\w-]+\.[a-z]{2,}/i.test(m[1]))
+      reply = await api('/api/website', { url: m[1].replace(/^(the|up)?\s*/, '') });
+
     else if ((m = t.match(/^open (.+)$/))) reply = await api('/api/open', { app: m[1].replace(/^(the|up)?\s*/, '') });
+
+    else if ((m = t.match(/^(?:find|search for|look for)(?: a)?(?: file(?: named)?)? (.+)$/)) && !/on (google|youtube)/.test(t))
+      reply = await api('/api/find', { name: m[1] });
+
+    else if (/^lock( my)?( pc| computer| workstation)?$/.test(t)) reply = await api('/api/lock');
+    else if (/restart|reboot/.test(t))
+      reply = 'For safety, type: restart confirm — then I will execute it.';
+    else if (/^restart confirm$/.test(t.trim()))
+      reply = await api('/api/restart', { confirm: 'yes-jarvis-restart' });
+
+    else if ((m = t.match(/^copy (.+)$/))) reply = await api('/api/clipboard', { action: 'set', text: m[1] });
+    else if (/read clipboard|what.s in (the )?clipboard|paste clipboard/.test(t)) reply = await api('/api/clipboard', { action: 'get' });
+
+    else if (/next (song|track)/.test(t)) reply = await api('/api/media', { action: 'next' });
+    else if (/previous (song|track)|last (song|track)/.test(t)) reply = await api('/api/media', { action: 'previous' });
+    else if (/stop (the )?music|stop playback/.test(t)) reply = await api('/api/media', { action: 'stop' });
+    else if (/^pause$|^resume$|play music|play the music|pause music/.test(t)) reply = await api('/api/media', { action: 'play' });
+
+    else if ((m = t.match(/brightness (?:to )?(\d+)/))) reply = await api('/api/brightness', { level: m[1] });
+
+    else if (/wifi|wi-fi|network status/.test(t)) reply = await api('/api/wifi');
+
+    else if (/list (running )?processes|top processes|what processes/.test(t)) reply = await api('/api/processes');
+    else if ((m = t.match(/(?:kill|end|terminate|close) (?:the )?(?:process )?(\w+)$/)) && !/down|music|playback/.test(m[1]))
+      reply = await api('/api/kill', { name: m[1] });
+
+    else if ((m = t.match(/^remind me to (.+?)(?: in (\d+(?:\.\d+)?) ?(second|minute|hour)s?)?$/))) {
+      let mins = m[2] ? parseFloat(m[2]) : 5;
+      if (m[3] === 'second') mins /= 60;
+      if (m[3] === 'hour') mins *= 60;
+      reply = await api('/api/remind', { text: m[1], minutes: mins });
+    }
 
     else if (/volume up/.test(t)) reply = await api('/api/volume', { action: 'up' });
     else if (/volume down/.test(t)) reply = await api('/api/volume', { action: 'down' });
