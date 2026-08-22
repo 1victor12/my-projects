@@ -7,3 +7,7 @@ node_modules/
 *.db-journal
 public/uploads/
 prisma/migrations/kanban-app/data/
+jarvis/cert.pem
+jarvis/key.pem
+jarvis/reminders.json
+auto-push.ps1
