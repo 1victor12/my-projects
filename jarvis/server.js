@@ -1,15 +1,28 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execFile } = require('child_process');
 
 const ROOT = __dirname;
-const PORT = 8124;
+const PORT = process.env.JARVIS_PORT || 8124;
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+
+const CERT_FILE = path.join(ROOT, 'cert.pem');
+const KEY_FILE = path.join(ROOT, 'key.pem');
+
+function lanIPs() {
+  return Object.values(os.networkInterfaces())
+    .flat()
+    .filter(i => i && i.family === 'IPv4' && !i.internal)
+    .map(i => i.address);
+}
 
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
-  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon'
+  '.json': 'application/json', '.webmanifest': 'application/manifest+json',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon'
 };
 
 function ps(script) {
@@ -203,7 +216,7 @@ async function ollamaChat(messages) {
   return d.message.content;
 }
 
-const server = http.createServer(async (req, res) => {
+const serverLogic = async (req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   const q = new URL(req.url, 'http://x').searchParams;
 
@@ -274,6 +287,19 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     json(res, 500, { error: e.message });
   }
-});
+};
 
-server.listen(PORT, () => console.log(`J.A.R.V.I.S. online -> http://localhost:${PORT}`));
+if (fs.existsSync(CERT_FILE) && fs.existsSync(KEY_FILE)) {
+  const creds = { key: fs.readFileSync(KEY_FILE), cert: fs.readFileSync(CERT_FILE) };
+  https.createServer(creds, serverLogic).listen(PORT, '0.0.0.0', () => {
+    console.log(`J.A.R.V.I.S. online (HTTPS - phone mic enabled)`);
+    console.log(`  On this PC : https://localhost:${PORT}`);
+    lanIPs().forEach(ip => console.log(`  On phone   : https://${ip}:${PORT}  (accept the certificate warning once)`));
+  });
+} else {
+  http.createServer(serverLogic).listen(PORT, '0.0.0.0', () => {
+    console.log(`J.A.R.V.I.S. online -> http://localhost:${PORT}`);
+    lanIPs().forEach(ip => console.log(`  On phone   : http://${ip}:${PORT}  (typed commands work; mic needs HTTPS)`));
+  });
+}
+

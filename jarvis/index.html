@@ -135,7 +135,7 @@
     <input type="text" id="typed" placeholder='Type a command — try "system status", "weather", "open calculator"...' autocomplete="off">
     <button class="hud" id="sendBtn">Send</button>
   </div>
-  <div class="hint">wake mode: say "jarvis" before a command · voice requires chrome or edge · server must be running</div>
+  <div class="hint">wake mode: say "jarvis" before a command · voice requires chrome or edge · same-wifi phone access works too</div>
 </div>
 
 <script>
@@ -365,6 +365,14 @@ typed.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElem
 window.addEventListener('keydown', e => {
   if (e.code === 'Space' && document.activeElement !== typed) { e.preventDefault(); micBtn.click(); }
 });
+
+setInterval(async () => {
+  try {
+    const r = await fetch('/api/reminders');
+    const d = await r.json();
+    (d.due || []).forEach(msg => { addMsg('[JARVIS] ' + msg, 'err'); speak(msg); });
+  } catch {}
+}, 20000);
 
 addMsg('JARVIS initialized. Click the reactor (or press Space) and speak after the beep-tone of your own courage. Try: "what time is it", "open calculator", "weather", "system status".', 'jarvis');
 </script>
