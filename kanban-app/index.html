@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowBoard — Kanban</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #171a23;
+    --panel-2: #1e2230;
+    --border: #2a3040;
+    --text: #e8ebf4;
+    --muted: #8b93a7;
+    --accent: #6c5ce7;
+    --accent-2: #a29bfe;
+    --green: #00b894;
+    --amber: #fdcb6e;
+    --red: #ff7675;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: radial-gradient(1200px 600px at 70% -10%, #1c2033 0%, var(--bg) 60%);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 32px; border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+  }
+  .logo { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+  .logo-dot { width: 14px; height: 14px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 0 18px var(--accent); }
+  .search-wrap { position: relative; }
+  .search-wrap svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); opacity: .5; }
+  #search {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    padding: 10px 14px 10px 38px; border-radius: 10px; width: 260px; font-size: 14px; outline: none;
+    transition: border-color .2s;
+  }
+  #search:focus { border-color: var(--accent); }
+  main {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px; padding: 32px; max-width: 1200px; margin: 0 auto;
+  }
+  .column {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+    display: flex; flex-direction: column; max-height: calc(100vh - 140px);
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .column.drag-over { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(108,92,231,.25); }
+  .column-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 16px 8px;
+  }
+  .column-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; display: flex; align-items: center; gap: 8px; }
+  .column-title .dot { width: 9px; height: 9px; border-radius: 3px; }
+  .count {
+    background: var(--panel-2); color: var(--muted); font-size: 12px; font-weight: 600;
+    padding: 2px 10px; border-radius: 999px;
+  }
+  .cards { flex: 1; overflow-y: auto; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .cards::-webkit-scrollbar { width: 8px; }
+  .cards::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+  .card {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 14px; cursor: grab; user-select: none;
+    transition: transform .12s, box-shadow .12s, opacity .12s, border-color .12s;
+    animation: pop .18s ease;
+  }
+  @keyframes pop { from { transform: scale(.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .card:hover { border-color: #39415a; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+  .card.dragging { opacity: .45; transform: rotate(2deg) scale(1.02); }
+  .card-text { font-size: 14px; line-height: 1.45; word-break: break-word; outline: none; border-radius: 6px; padding: 2px 4px; margin: -2px -4px; }
+  .card-text[contenteditable="true"] { background: rgba(108,92,231,.12); box-shadow: 0 0 0 1.5px var(--accent); cursor: text; }
+  .card-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+  .card-date { font-size: 11px; color: var(--muted); }
+  .del-btn {
+    background: none; border: none; color: var(--muted); cursor: pointer; padding: 4px;
+    border-radius: 6px; display: flex; opacity: 0; transition: opacity .15s, color .15s, background .15s;
+  }
+  .card:hover .del-btn { opacity: 1; }
+  .del-btn:hover { color: var(--red); background: rgba(255,118,117,.12); }
+  .add-form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+  .add-input {
+    flex: 1; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: 10px 12px; border-radius: 10px; font-size: 13px; outline: none; transition: border-color .2s;
+  }
+  .add-input::placeholder { color: var(--muted); }
+  .add-input:focus { border-color: var(--accent); }
+  .add-btn {
+    background: linear-gradient(135deg, var(--accent), #8f7bff); color: white; border: none;
+    width: 40px; border-radius: 10px; cursor: pointer; font-size: 18px; font-weight: 600;
+    transition: filter .15s, transform .1s;
+  }
+  .add-btn:hover { filter: brightness(1.15); }
+  .add-btn:active { transform: scale(.94); }
+  .empty {
+    text-align: center; color: var(--muted); font-size: 12.5px; padding: 26px 10px;
+    border: 1.5px dashed var(--border); border-radius: 12px;
+  }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 8px 0 28px; }
+  footer button { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 12px; transition: all .15s; }
+  footer button:hover { color: var(--red); border-color: var(--red); }
+  @media (max-width: 700px) {
+    header { flex-direction: column; gap: 14px; }
+    main { grid-template-columns: 1fr; }
+    .column { max-height: 60vh; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><span class="logo-dot"></span>FlowBoard</div>
+  <div class="search-wrap">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <input id="search" type="text" placeholder="Search cards...">
+  </div>
+</header>
+
+<main id="board"></main>
+
+<footer><span id="stats"></span> &nbsp;·&nbsp; <button id="clear">Clear board</button></footer>
+
+<script>
+const COLUMNS = [
+  { id: 'todo', label: 'To Do', dot: '#6c5ce7' },
+  { id: 'doing', label: 'In Progress', dot: '#fdcb6e' },
+  { id: 'done', label: 'Done', dot: '#00b894' }
+];
+const STORE_KEY = 'flowboard.v1';
+let state = load();
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {
+    todo: [
+      { id: crypto.randomUUID(), text: 'Welcome! Drag me to another column 👋', created: Date.now() },
+      { id: crypto.randomUUID(), text: 'Click any card text to edit it', created: Date.now() }
+    ],
+    doing: [{ id: crypto.randomUUID(), text: 'Build something awesome', created: Date.now() }],
+    done: []
+  };
+}
+function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+
+const board = document.getElementById('board');
+const searchEl = document.getElementById('search');
+let query = '';
+
+function render() {
+  board.innerHTML = '';
+  let total = 0;
+  for (const col of COLUMNS) {
+    const cards = state[col.id].filter(c => c.text.toLowerCase().includes(query));
+    total += state[col.id].length;
+
+    const colEl = document.createElement('section');
+    colEl.className = 'column';
+    colEl.dataset.colId = col.id;
+    colEl.innerHTML = `
+      <div class="column-head">
+        <div class="column-title"><span class="dot" style="background:${col.dot}"></span>${col.label}</div>
+        <span class="count">${cards.length}</span>
+      </div>
+      <div class="cards" data-drop="${col.id}"></div>
+      <form class="add-form">
+        <input class="add-input" type="text" placeholder="Add a card..." maxlength="200" data-add="${col.id}">
+        <button class="add-btn" type="submit">+</button>
+      </form>`;
+    board.appendChild(colEl);
+
+    const list = colEl.querySelector('.cards');
+
+    if (!cards.length) {
+      list.innerHTML = '<div class="empty">' + (query ? 'No matches' : 'Drop cards here') + '</div>';
+    }
+
+    for (const card of cards) {
+      const el = document.createElement('article');
+      el.className = 'card';
+      el.draggable = true;
+      el.dataset.id = card.id;
+      const d = new Date(card.created);
+      el.innerHTML = `
+        <div class="card-text" contenteditable="true" spellcheck="false"></div>
+        <div class="card-meta">
+          <span class="card-date">${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+          <button class="del-btn" title="Delete card">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0l1 14h8l1-14"/></svg>
+          </button>
+        </div>`;
+      const txt = el.querySelector('.card-text');
+      txt.textContent = card.text;
+      txt.addEventListener('blur', () => {
+        const v = txt.textContent.trim();
+        if (v) { card.text = v; } else if (confirm('Empty card — delete it?')) { removeCard(col.id, card.id); return; }
+        save();
+        txt.textContent = card.text;
+      });
+      txt.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); txt.blur(); }
+        if (e.key === 'Escape') { txt.textContent = card.text; txt.blur(); }
+      });
+      el.querySelector('.del-btn').addEventListener('click', () => removeCard(col.id, card.id));
+
+      el.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('text/plain', JSON.stringify({ from: col.id, id: card.id }));
+        e.dataTransfer.effectAllowed = 'move';
+        requestAnimationFrame(() => el.classList.add('dragging'));
+      });
+      el.addEventListener('dragend', () => el.classList.remove('dragging'));
+
+      list.appendChild(el);
+    }
+
+    const dropzone = colEl.querySelector('.cards');
+    dropzone.parentElement.addEventListener('dragover', e => { e.preventDefault(); colEl.classList.add('drag-over'); });
+    dropzone.parentElement.addEventListener('dragleave', e => { if (!colEl.contains(e.relatedTarget)) colEl.classList.remove('drag-over'); });
+    dropzone.parentElement.addEventListener('drop', e => {
+      e.preventDefault();
+      colEl.classList.remove('drag-over');
+      try {
+        const { from, id } = JSON.parse(e.dataTransfer.getData('text/plain'));
+        moveCard(from, col.id, id);
+      } catch {}
+    });
+
+    colEl.querySelector('.add-form').addEventListener('submit', e => {
+      e.preventDefault();
+      const input = e.target.querySelector('.add-input');
+      const v = input.value.trim();
+      if (!v) return;
+      state[col.id].push({ id: crypto.randomUUID(), text: v, created: Date.now() });
+      save(); render();
+      board.querySelector(`[data-col-id="${col.id}"] .cards`).scrollTo({ top: 99999, behavior: 'smooth' });
+    });
+  }
+
+  document.getElementById('stats').textContent =
+    `${total} card${total === 1 ? '' : 's'} · saved locally`;
+}
+
+function removeCard(colId, id) {
+  state[colId] = state[colId].filter(c => c.id !== id);
+  save(); render();
+}
+
+function moveCard(from, to, id) {
+  if (from === to) return;
+  const idx = state[from].findIndex(c => c.id === id);
+  if (idx === -1) return;
+  const [card] = state[from].splice(idx, 1);
+  state[to].push(card);
+  save(); render();
+}
+
+searchEl.addEventListener('input', () => { query = searchEl.value.trim().toLowerCase(); render(); });
+
+document.getElementById('clear').addEventListener('click', () => {
+  if (!confirm('Delete ALL cards on the board?')) return;
+  state = { todo: [], doing: [], done: [] };
+  save(); render();
+});
+
+render();
+</script>
+</body>
+</html>

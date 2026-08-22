@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  name          String
+  birthdate     DateTime
+  gender        String
+  interestedIn  String
+  bio           String?
+  city          String?
+  photos        Photo[]
+  preferences   Preference?
+  sentSwipes    Swipe[]   @relation("Swiper")
+  receivedSwipes Swipe[]  @relation("Swipee")
+  matchesA      Match[]   @relation("UserA")
+  matchesB      Match[]   @relation("UserB")
+  messages      Message[]
+  blockedUsers  Block[]   @relation("Blocker")
+  blockedBy     Block[]   @relation("Blocked")
+  reportsSent   Report[]  @relation("Reporter")
+  reportsReceived Report[] @relation("Reported")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Photo {
+  id        String   @id @default(cuid())
+  url       String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isPrimary Boolean  @default(false)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model Preference {
+  id           String  @id @default(cuid())
+  userId       String  @unique
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  minAge       Int     @default(18)
+  maxAge       Int     @default(99)
+  genders      String  @default("all")
+  maxDistance  Int?    // km, optional
+  showMe       Boolean @default(true)
+}
+
+model Swipe {
+  id        String   @id @default(cuid())
+  swiperId  String
+  swiper    User     @relation("Swiper", fields: [swiperId], references: [id], onDelete: Cascade)
+  swipeeId  String
+  swipee    User     @relation("Swipee", fields: [swipeeId], references: [id], onDelete: Cascade)
+  type      String   // LIKE, PASS, SUPER
+  createdAt DateTime @default(now())
+  @@unique([swiperId, swipeeId])
+}
+
+model Match {
+  id        String    @id @default(cuid())
+  userAId   String
+  userA     User      @relation("UserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userBId   String
+  userB     User      @relation("UserB", fields: [userBId], references: [id], onDelete: Cascade)
+  isActive  Boolean   @default(true)
+  messages  Message[]
+  createdAt DateTime  @default(now())
+  @@unique([userAId, userBId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  matchId   String
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content   String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+}
+
+model Block {
+  id         String   @id @default(cuid())
+  blockerId  String
+  blocker    User     @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId  String
+  blocked    User     @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  @@unique([blockerId, blockedId])
+}
+
+model Report {
+  id         String   @id @default(cuid())
+  reporterId String
+  reporter   User     @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reportedId String
+  reported   User     @relation("Reported", fields: [reportedId], references: [id], onDelete: Cascade)
+  reason     String
+  createdAt  DateTime @default(now())
+}

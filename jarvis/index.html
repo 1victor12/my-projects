@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>J.A.R.V.I.S.</title>
+<style>
+  :root {
+    --cyan: #00e5ff;
+    --gold: #ffb300;
+    --dim: #0a3a44;
+    --bg: #03080d;
+    --red: #ff3b3b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: 'Consolas', 'Courier New', monospace;
+    background:
+      radial-gradient(ellipse at 50% 60%, rgba(0,229,255,.06) 0%, transparent 55%),
+      var(--bg);
+    color: var(--cyan);
+    display: flex; flex-direction: column;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(0,229,255,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,.04) 1px, transparent 1px);
+    background-size: 42px 42px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  }
+  .frame { position: fixed; width: 34px; height: 34px; pointer-events: none; opacity: .7; }
+  .frame.tl { top: 14px; left: 14px; border-top: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+  .frame.tr { top: 14px; right: 14px; border-top: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+  .frame.bl { bottom: 14px; left: 14px; border-bottom: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+  .frame.br { bottom: 14px; right: 14px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+
+  header {
+    text-align: center; padding: 18px 0 6px; z-index: 2;
+  }
+  header h1 {
+    font-size: clamp(18px, 3vw, 28px); letter-spacing: 12px; font-weight: 400;
+    color: var(--cyan); text-shadow: 0 0 18px rgba(0,229,255,.8);
+  }
+  header .sub { font-size: 11px; color: rgba(0,229,255,.45); letter-spacing: 4px; margin-top: 4px; }
+
+  .core-zone { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; min-height: 220px; }
+  .reactor { position: relative; width: 240px; height: 240px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+  .ring { position: absolute; border-radius: 50%; border-style: solid; transition: box-shadow .3s, transform .3s; }
+  .r1 { inset: 0; border-width: 1px; border-color: rgba(0,229,255,.35); animation: spin 24s linear infinite; }
+  .r2 { inset: 16px; border-width: 2px; border-color: rgba(0,229,255,.25); border-bottom-color: var(--cyan); animation: spin 9s linear infinite reverse; }
+  .r3 { inset: 36px; border-width: 1px dashed rgba(255,179,0,.5); animation: spin 14s linear infinite; }
+  .r4 { inset: 58px; border-width: 6px; border-color: rgba(0,229,255,.15); border-top-color: rgba(0,229,255,.7); animation: spin 5s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .core {
+    position: absolute; inset: 88px; border-radius: 50%;
+    background: radial-gradient(circle, #fff 0%, var(--cyan) 30%, rgba(0,140,180,.6) 65%, transparent 72%);
+    box-shadow: 0 0 40px rgba(0,229,255,.9), 0 0 90px rgba(0,229,255,.45), inset 0 0 24px white;
+    animation: breathe 3s ease-in-out infinite;
+  }
+  @keyframes breathe { 50% { transform: scale(1.08); filter: brightness(1.25); } }
+  .listening .core { background: radial-gradient(circle, #fff 0%, var(--gold) 30%, rgba(180,120,0,.6) 65%, transparent 72%); box-shadow: 0 0 46px rgba(255,179,0,.95), 0 0 110px rgba(255,179,0,.5), inset 0 0 24px white; animation-duration: .9s; }
+  .thinking .core { animation-duration: .45s; }
+
+  .status {
+    position: absolute; bottom: 4px; left: 0; right: 0; text-align: center;
+    font-size: 12px; letter-spacing: 6px; color: rgba(0,229,255,.85);
+    text-transform: uppercase; min-height: 18px;
+  }
+  .status.alert { color: var(--red); }
+
+  .eq { display: flex; gap: 4px; justify-content: center; align-items: flex-end; height: 26px; margin-top: 8px; visibility: hidden; }
+  .eq.on { visibility: visible; }
+  .eq span { width: 4px; background: var(--gold); height: 20%; border-radius: 2px; box-shadow: 0 0 8px var(--gold); animation: bounce .5s ease-in-out infinite alternate; }
+  .eq span:nth-child(2) { animation-delay: .12s } .eq span:nth-child(3) { animation-delay: .24s }
+  .eq span:nth-child(4) { animation-delay: .06s } .eq span:nth-child(5) { animation-delay: .3s }
+  .eq span:nth-child(6) { animation-delay: .18s } .eq span:nth-child(7) { animation-delay: .09s }
+  @keyframes bounce { from { height: 15% } to { height: 100% } }
+
+  .log {
+    flex: 1.1; max-width: 760px; width: calc(100% - 48px); margin: 0 auto;
+    overflow-y: auto; padding: 10px 18px; z-index: 2;
+    scrollbar-width: thin; scrollbar-color: var(--dim) transparent;
+  }
+  .log::-webkit-scrollbar { width: 5px } .log::-webkit-scrollbar-thumb { background: var(--dim) }
+  .msg { margin: 10px 0; font-size: 14px; line-height: 1.5; opacity: 0; animation: fadein .3s forwards; }
+  @keyframes fadein { to { opacity: 1 } }
+  .msg.you { color: rgba(255,255,255,.85); }
+  .msg.you::before { content: '> '; color: var(--gold); }
+  .msg.jarvis { color: var(--cyan); text-shadow: 0 0 10px rgba(0,229,255,.35); }
+  .msg.jarvis::before { content: 'JARVIS: '; color: var(--gold); letter-spacing: 2px; }
+  .msg.err { color: var(--red); }
+
+  .controls { padding: 14px 24px 22px; z-index: 2; }
+  .bar { display: flex; gap: 10px; max-width: 760px; margin: 0 auto; }
+  input[type=text] {
+    flex: 1; background: rgba(0,229,255,.05); border: 1px solid rgba(0,229,255,.35);
+    color: #fff; padding: 13px 16px; font-family: inherit; font-size: 14px;
+    outline: none; border-radius: 4px; transition: border-color .2s, box-shadow .2s;
+  }
+  input[type=text]:focus { border-color: var(--cyan); box-shadow: 0 0 16px rgba(0,229,255,.25); }
+  button.hud {
+    background: rgba(0,229,255,.08); border: 1px solid rgba(0,229,255,.5); color: var(--cyan);
+    font-family: inherit; letter-spacing: 2px; font-size: 12px; padding: 0 20px; cursor: pointer;
+    border-radius: 4px; transition: all .2s; text-transform: uppercase;
+  }
+  button.hud:hover { background: rgba(0,229,255,.2); box-shadow: 0 0 14px rgba(0,229,255,.35); }
+  button.hud.active { background: rgba(255,179,0,.15); border-color: var(--gold); color: var(--gold); box-shadow: 0 0 14px rgba(255,179,0,.35); }
+  .hint { text-align: center; font-size: 11px; color: rgba(0,229,255,.4); letter-spacing: 1px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="frame tl"></div><div class="frame tr"></div><div class="frame bl"></div><div class="frame br"></div>
+
+<header>
+  <h1>J.A.R.V.I.S.</h1>
+  <div class="sub">JUST A RATHER VERY INTELLIGENT SYSTEM</div>
+</header>
+
+<div class="core-zone" id="coreZone">
+  <div class="reactor" id="reactor">
+    <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div><div class="ring r4"></div>
+    <div class="core"></div>
+  </div>
+  <div class="status" id="status">STANDBY — CLICK REACTOR OR PRESS MIC TO SPEAK</div>
+  <div class="eq" id="eq"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+</div>
+
+<div class="log" id="log"></div>
+
+<div class="controls">
+  <div class="bar">
+    <button class="hud" id="micBtn">Mic: Off</button>
+    <input type="text" id="typed" placeholder='Type a command — try "system status", "weather", "open calculator"...' autocomplete="off">
+    <button class="hud" id="sendBtn">Send</button>
+  </div>
+  <div class="hint">wake mode: say "jarvis" before a command · voice requires chrome or edge · server must be running</div>
+</div>
+
+<script>
+const logEl = document.getElementById('log');
+const statusEl = document.getElementById('status');
+const eq = document.getElementById('eq');
+const coreZone = document.getElementById('coreZone');
+const reactor = document.getElementById('reactor');
+const micBtn = document.getElementById('micBtn');
+const typed = document.getElementById('typed');
+
+let speaking = false;
+
+function setStatus(t, alert) {
+  statusEl.textContent = t;
+  statusEl.classList.toggle('alert', !!alert);
+}
+function addMsg(text, cls) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.textContent = text;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+const synth = window.speechSynthesis;
+let voice = null;
+function pickVoice() {
+  const vs = synth.getVoices();
+  voice = vs.find(v => /guy|daniel|david|male/i.test(v.name) && v.lang.startsWith('en'))
+       || vs.find(v => v.lang.startsWith('en')) || vs[0];
+}
+if (synth) { pickVoice(); synth.onvoiceschanged = pickVoice; }
+
+function speak(text) {
+  if (!synth) return;
+  synth.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  if (voice) u.voice = voice;
+  u.rate = 1.02; u.pitch = 0.85;
+  u.onstart = () => { speaking = true; eq.classList.add('on'); };
+  u.onend = () => { speaking = false; eq.classList.remove('on'); setStatus(micOn ? 'LISTENING' : 'STANDBY'); };
+  synth.speak(u);
+}
+
+async function api(path, body) {
+  const opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {};
+  const r = await fetch(path, opts);
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d.reply || '';
+}
+
+const JOKES = [
+  'Why did the robot go on vacation? It needed to recharge.',
+  'I would tell you a UDP joke, but you might not get it.',
+  'There are only two hard things in computing: cache invalidation, naming things, and off-by-one errors.',
+  'Why do programmers prefer dark mode? Because light attracts bugs.',
+  'I speak fluent English, binary, and sarcasm. Mostly sarcasm.'
+];
+
+let chatHistory = [{ role: 'system', content: 'You are JARVIS, Tony Stark\'s AI assistant. Be concise, witty and formal.' }];
+
+async function handle(raw) {
+  const text = raw.trim();
+  if (!text) return;
+  addMsg(text, 'you');
+  setStatus('PROCESSING');
+  coreZone.classList.add('thinking');
+  let reply = '';
+
+  try {
+    const t = text.toLowerCase();
+
+    if (/^(hi|hello|hey|good (morning|afternoon|evening))\b/.test(t) && t.length < 30)
+      reply = `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}, sir. All systems online.`;
+    else if (/who are you|what is your name|introduce yourself/.test(t))
+      reply = 'I am J.A.R.V.I.S. Just A Rather Very Intelligent System, at your service.';
+    else if (/\btime\b/.test(t) && !/timer/.test(t))
+      reply = `It is currently ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+    else if (/date|day is it|today's date/.test(t))
+      reply = `Today is ${new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`;
+
+    else if ((m = t.match(/^open (.+)$/))) reply = await api('/api/open', { app: m[1].replace(/^(the|up)?\s*/, '') });
+
+    else if (/volume up/.test(t)) reply = await api('/api/volume', { action: 'up' });
+    else if (/volume down/.test(t)) reply = await api('/api/volume', { action: 'down' });
+    else if (/mute|unmute/.test(t)) reply = await api('/api/volume', { action: 'mute' });
+    else if ((m = t.match(/(?:set )?volume (?:to )?(\d+)/))) reply = await api('/api/volume', { action: 'set', level: m[1] });
+
+    else if (/screenshot|screen shot/.test(t)) reply = await api('/api/screenshot');
+
+    else if (/battery|cpu|memory|ram|system status|status report|how.*system/.test(t))
+      reply = await api('/api/sysinfo');
+    else if ((m = t.match(/weather (?:in |for |at )?(.+)$/)) || /^weather$/.test(t.trim()))
+      reply = await api('/api/weather' + (m ? '?city=' + encodeURIComponent(m[1]) : ''));
+
+    else if ((m = t.match(/(?:search|google)(?: for)? (.+)/)))
+      { window.open('https://www.google.com/search?q=' + encodeURIComponent(m[1]), '_blank'); reply = `Searching Google for ${m[1]}`; }
+    else if ((m = t.match(/(?:play |search )(.+?)(?: on youtube)$/) || t.match(/^play (.+)$/)))
+      { window.open('https://www.youtube.com/results?search_query=' + encodeURIComponent(m[1]), '_blank'); reply = `Playing ${m[1]} on YouTube`; }
+
+    else if (/joke/.test(t)) reply = JOKES[Math.floor(Math.random() * JOKES.length)];
+    else if (/flip a coin|coin flip/.test(t)) reply = `The coin shows ${Math.random() < .5 ? 'heads' : 'tails'}, sir.`;
+    else if ((m = t.match(/roll (?:a )?(?:die|dice)(?:\s*(\d+))?/))) {
+      const sides = parseInt(m[1]) || 6;
+      reply = `Rolling a d${sides}... ${Math.floor(Math.random() * sides) + 1}.`;
+    }
+
+    else if ((m = t.match(/timer (?:for )?(\d+) ?(second|minute)s?/))) {
+      const ms = parseInt(m[1]) * (m[2] === 'minute' ? 60000 : 1000);
+      setTimeout(() => { addMsg('[Timer complete]', 'err'); speak(`Sir, your ${m[1]} ${m[2]} timer has elapsed.`); }, ms);
+      reply = `${m[1]} ${m[2]} timer started, sir. I will notify you.`;
+    }
+
+    else if (/shutdown|shut down|power off/.test(t))
+      reply = 'For safety, type: shutdown confirm — then I will execute it.';
+    else if (/^shutdown confirm$/.test(t.trim()))
+      reply = await api('/api/shutdown', { confirm: 'yes-jarvis-shutdown' });
+
+    else {
+      chatHistory.push({ role: 'user', content: text });
+      if (chatHistory.length > 21) chatHistory = [chatHistory[0], ...chatHistory.slice(-20)];
+      try { reply = await api('/api/chat', { messages: chatHistory }); chatHistory.push({ role: 'assistant', content: reply }); }
+      catch (e) { reply = e.message.includes('Ollama') ? e.message : 'I did not quite catch that, sir. Try "help" commands like open, weather, volume, or system status.'; }
+    }
+  } catch (e) {
+    addMsg(e.message, 'err');
+    reply = 'I encountered an error executing that, sir. Is the server running?';
+  }
+
+  coreZone.classList.remove('thinking');
+  addMsg(reply, 'jarvis');
+  speak(reply);
+}
+
+let recog = null, micOn = false, wakeArmed = 0;
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function initRecog() {
+  recog = new SR();
+  recog.continuous = true;
+  recog.interimResults = true;
+  recog.lang = 'en-US';
+
+  recog.onstart = () => { micOn = true; micBtn.textContent = 'Mic: On'; micBtn.classList.add('active'); setStatus('LISTENING'); };
+  recog.onerror = e => {
+    if (e.error === 'not-allowed') { addMsg('Microphone permission denied. Allow mic access in your browser.', 'err'); stopMic(); }
+  };
+  recog.onend = () => { if (micOn) { try { recog.start(); } catch {} } };
+
+  recog.onresult = ev => {
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      if (!ev.results[i].isFinal) continue;
+      let phrase = ev.results[i][0].transcript.trim();
+      const lower = phrase.toLowerCase();
+      if (lower.startsWith('jarvis')) {
+        wakeArmed = Date.now() + 15000;
+        phrase = phrase.replace(/^jarvis[, ]*/i, '');
+      }
+      if (!phrase) continue;
+      if (Date.now() < wakeArmed && !speaking && lower !== 'jarvis') {
+        recog.stop();
+        handle(phrase).then(() => { if (micOn) { try { recog.start(); } catch {} } });
+      }
+    }
+  };
+}
+
+function stopMic() {
+  micOn = false;
+  if (recog) { recog.onend = null; try { recog.stop(); } catch {} }
+  micBtn.textContent = 'Mic: Off';
+  micBtn.classList.remove('active');
+  setStatus('STANDBY — CLICK REACTOR OR PRESS MIC TO SPEAK');
+}
+
+micBtn.addEventListener('click', () => {
+  if (!SR) return addMsg('Speech recognition not supported here. Use Chrome or Edge.', 'err');
+  if (micOn) return stopMic();
+  if (!recog) initRecog();
+  try { recog.start(); } catch {}
+});
+reactor.addEventListener('click', () => micBtn.click());
+document.getElementById('sendBtn').addEventListener('click', () => {
+  const v = typed.value; typed.value = '';
+  handle(v);
+});
+typed.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('sendBtn').click(); });
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' && document.activeElement !== typed) { e.preventDefault(); micBtn.click(); }
+});
+
+addMsg('JARVIS initialized. Click the reactor (or press Space) and speak after the beep-tone of your own courage. Try: "what time is it", "open calculator", "weather", "system status".', 'jarvis');
+</script>
+</body>
+</html>
