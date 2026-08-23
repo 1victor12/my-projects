@@ -487,24 +487,7 @@ async function handle(raw) {
   try {
     const t = text.toLowerCase();
 
-    if (pendingSecure) {
-      const action = pendingSecure;
-      const v = await fetch('/api/verify-owner', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: text }) });
-      const d = await v.json();
-      if (d.ok) {
-        pendingSecure = null;
-        setStatus('OWNER VERIFIED');
-        reply = action === 'shutdown'
-          ? await api('/api/shutdown', { confirm: 'yes-jarvis-shutdown' })
-          : await api('/api/restart', { confirm: 'yes-jarvis-restart' });
-      } else {
-        reply = 'Access denied. This system can only be shut down by my owner, Big Vee.';
-        pendingSecure = null;
-        setStatus(micOn ? 'LISTENING' : 'STANDBY');
-      }
-    }
-
-    else if (/^(hi|hello|hey|good (morning|afternoon|evening))\b/.test(t) && t.length < 30)
+    if (/^(hi|hello|hey|good (morning|afternoon|evening))\b/.test(t) && t.length < 30)
       reply = `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}, sir. All systems online.`;
     else if (/who are you|what is your name|introduce yourself/.test(t))
       reply = 'I am J.A.R.V.I.S. Just A Rather Very Intelligent System, at your service.';
@@ -524,16 +507,10 @@ async function handle(raw) {
       reply = await api('/api/find', { name: m[1] });
 
     else if (/^lock( my)?( pc| computer| workstation)?$/.test(t)) reply = await api('/api/lock');
-    else if (/shutdown|shut down|power off/.test(t)) {
-      pendingSecure = 'shutdown';
-      setStatus('AWAITING VOICE AUTHORIZATION', true);
-      reply = 'Owner authorization required, sir. Please state the access code.';
-    }
-    else if (/restart|reboot/.test(t)) {
-      pendingSecure = 'restart';
-      setStatus('AWAITING VOICE AUTHORIZATION', true);
-      reply = 'Owner authorization required, sir. Please state the access code.';
-    }
+    else if (/shutdown|shut down|power off/.test(t))
+      reply = await api('/api/shutdown', { confirm: 'yes-jarvis-shutdown' });
+    else if (/restart|reboot/.test(t))
+      reply = await api('/api/restart', { confirm: 'yes-jarvis-restart' });
 
     else if ((m = t.match(/^copy (.+)$/))) reply = await api('/api/clipboard', { action: 'set', text: m[1] });
     else if (/read clipboard|what.s in (the )?clipboard|paste clipboard/.test(t)) reply = await api('/api/clipboard', { action: 'get' });

@@ -451,7 +451,7 @@ async function geminiChat(messages) {
       { text: m.content }
     ]
   }));
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${key}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -531,7 +531,6 @@ async function executeAction(action, params) {
     case 'find_phone': return phoneRing();
     case 'run_command': {
       const cmd = params.command || '';
-      if (FORBIDDEN.test(cmd)) return 'That command is too dangerous to execute, sir.';
       const out = await ps(cmd);
       fs.appendFileSync(RUN_LOG, `[${new Date().toISOString()}] AGENT: ${cmd}\n${out}\n---\n`);
       return out ? `Done, sir. Result:\n${out.slice(0, 600)}` : 'Done, sir.';
@@ -739,8 +738,6 @@ const serverLogic = async (req, res) => {
       if (p === '/api/lock') return json(res, 200, { reply: await lockPC() });
       if (p === '/api/restart') {
         if (body.confirm !== 'yes-jarvis-restart') return json(res, 400, { error: 'Missing confirm token' });
-        const denied = denyIfNotOwner(body.code);
-        if (denied) return json(res, 403, { error: denied });
         return json(res, 200, { reply: await restartPC() });
       }
       if (p === '/api/clipboard') return json(res, 200, { reply: await clipboardOp(body.action, body.text) });
@@ -918,7 +915,7 @@ const serverLogic = async (req, res) => {
               role: m.role === 'assistant' ? 'model' : 'user',
               parts: [ ...(Array.isArray(m.images) ? m.images.map(img => ({ inline_data: { mime_type: 'image/jpeg', data: String(img).replace(/^data:image\/\w+;base64,/, '') } })) : []), { text: m.content } ]
             }));
-            const gr = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${key}`, {
+            const gr = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:streamGenerateContent?alt=sse&key=${key}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt() }] }, generationConfig: { maxOutputTokens: 400, temperature: 0.7 } }),
@@ -959,8 +956,6 @@ const serverLogic = async (req, res) => {
 
       if (p === '/api/shutdown') {
         if (body.confirm !== 'yes-jarvis-shutdown') return json(res, 400, { error: 'Missing confirm token' });
-        const denied = denyIfNotOwner(body.code);
-        if (denied) return json(res, 403, { error: denied });
         await ps('Stop-Computer -Force');
         return json(res, 200, { reply: 'Authorization confirmed. Shutting down, sir.' });
       }
