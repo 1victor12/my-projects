@@ -170,10 +170,67 @@ async function killProcess(name) {
 }
 
 const REMINDERS_FILE = path.join(ROOT, 'reminders.json');
+
+// ---------- YouTube upload pipeline ----------
+let google = null;
+try { google = require('googleapis').google; } catch {}
+const YT_SECRET = path.join(ROOT, 'client_secret.json');
+const YT_TOKEN = path.join(ROOT, 'yt_token.json');
+const VIDEO_EXTS = ['.mp4', '.mov', '.mkv', '.webm', '.avi'];
+
+function ytOAuth() {
+  if (!google || !fs.existsSync(YT_SECRET)) return null;
+  const raw = JSON.parse(fs.readFileSync(YT_SECRET, 'utf8'));
+  const c = raw.installed || raw.web;
+  return new google.auth.OAuth2(c.client_id, c.client_secret, 'http://localhost:8124/oauth2callback');
+}
+
+async function ytUpload(title, description) {
+  const dirs = [
+    path.join(process.env.USERPROFILE || '', 'Videos'),
+    path.join(process.env.USERPROFILE || '', 'Desktop'),
+    path.join(process.env.USERPROFILE || '', 'Downloads')
+  ];
+  let latest = null;
+  for (const dir of dirs) {
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        if (!VIDEO_EXTS.includes(path.extname(f).toLowerCase())) continue;
+        const full = path.join(dir, f);
+        if (!latest || fs.statSync(full).mtimeMs > fs.statSync(latest).mtimeMs) latest = full;
+      }
+    } catch {}
+  }
+  if (!latest) throw new Error('No video file found in Videos, Desktop or Downloads.');
+
+  const oauth2 = ytOAuth();
+  if (!fs.existsSync(YT_TOKEN)) {
+    return { needsAuth: true, message: 'YouTube is not connected yet, sir. Open https://localhost:8124/api/yt/auth in your browser to link your channel first.' };
+  }
+  oauth2.setCredentials(JSON.parse(fs.readFileSync(YT_TOKEN, 'utf8')));
+  const youtube = google.youtube({ version: 'v3', auth: oauth2 });
+  await youtube.videos.insert({
+    part: ['snippet', 'status'],
+    requestBody: {
+      snippet: { title: title || path.basename(latest, path.extname(latest)), description: description || '', categoryId: '22' },
+      status: { privacyStatus: 'public' }
+    },
+    media: { body: fs.createReadStream(latest) }
+  });
+  return { message: `Uploaded "${path.basename(latest)}" to YouTube as "${title || path.basename(latest)}", sir.` };
+}
+
 const HISTORY_FILE = path.join(ROOT, 'chat_history.json');
 const PROFILE_FILE = path.join(ROOT, 'profile.json');
 const RUN_LOG = path.join(ROOT, 'run_log.txt');
 const ROUTINES_FILE = path.join(ROOT, 'routines.json');
+const CONTACTS_FILE = path.join(ROOT, 'contacts.json');
+function loadContacts() {
+  try { return JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8')); } catch { return {}; }
+}
+function saveContacts(c) {
+  fs.writeFileSync(CONTACTS_FILE, JSON.stringify(c, null, 2));
+}
 function loadReminders() {
   try { return JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf8')); } catch { return []; }
 }
@@ -363,6 +420,12 @@ const serverLogic = async (req, res) => {
       if (p === '/api/wifi') return json(res, 200, { reply: await wifiInfo() });
       if (p === '/api/processes') return json(res, 200, { reply: await listProcesses() });
       if (p === '/api/kill') return json(res, 200, { reply: await killProcess(body.name) });
+
+      if (p === '/api/yt/upload') {
+        const result = await ytUpload(body.title, body.description);
+        if (result.needsAuth) return json(res, 200, { reply: result.message });
+        return json(res, 200, { reply: result.message });
+      }
       if (p === '/api/remind') return json(res, 200, { reply: await addReminder(body.text, body.minutes) });
       if (p === '/api/volume') return json(res, 200, { reply: await volume(body.action, body.level) });
       if (p === '/api/screenshot') return json(res, 200, { reply: await screenshot() });
@@ -431,8 +494,39 @@ const serverLogic = async (req, res) => {
       }
     }
 
-    if (req.method === 'GET' && p === '/api/health') {
-      const health = { server: 'ok', ollama: 'down', uptime: Math.round(process.uptime()), time: new Date().toISOString() };
+    if (req.method === 'GET' && p === '/api/yt/status') {
+      return json(res, 200, { configured: !!(google && fs.existsSync(YT_SECRET)), authorized: fs.existsSync(YT_TOKEN) });
+    }
+
+    if (req.method === 'GET' && p === '/api/yt/auth') {
+      const oauth2 = ytOAuth();
+      if (!oauth2) {
+        return json(res, 200, { reply: 'YouTube setup incomplete. Save your Google OAuth client file as jarvis/client_secret.json first, sir.' });
+      }
+      const url = oauth2.generateAuthUrl({
+        access_type: 'offline',
+        prompt: 'consent',
+        scope: ['https://www.googleapis.com/auth/youtube.upload']
+      });
+      res.writeHead(302, { Location: url });
+      return res.end();
+    }
+
+    if (req.method === 'GET' && p === '/oauth2callback') {
+      const oauth2 = ytOAuth();
+      try {
+        const { tokens } = await oauth2.getToken(q.get('code'));
+        oauth2.setCredentials(tokens);
+        fs.writeFileSync(YT_TOKEN, JSON.stringify(tokens));
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        return res.end('<h2 style="font-family:sans-serif">JARVIS is connected to YouTube. You can close this tab.</h2>');
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'text/html' });
+        return res.end('<h2 style="font-family:sans-serif">Auth failed: ' + e.message + '</h2>');
+      }
+    }
+
+    if (req.method === 'GET' && p === '/api/health') {      const health = { server: 'ok', ollama: 'down', uptime: Math.round(process.uptime()), time: new Date().toISOString() };
       try {
         const r = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(4000) });
         if (r.ok) {
@@ -468,6 +562,25 @@ const serverLogic = async (req, res) => {
 
     if (req.method === 'GET' && p === '/api/battery') {
       return json(res, 200, await batteryStatus());
+    }
+
+    if (req.method === 'GET' && p === '/api/contacts') {
+      return json(res, 200, { contacts: loadContacts() });
+    }
+
+    if (req.method === 'POST' && p === '/api/contacts') {
+      if (!body.name || !body.number) return json(res, 400, { error: 'Need name + number (with country code, e.g. 2557...)' });
+      const contacts = loadContacts();
+      contacts[body.name.toLowerCase().trim()] = String(body.number).replace(/[^0-9+]/g, '');
+      saveContacts(contacts);
+      return json(res, 200, { reply: `Contact "${body.name}" saved.` });
+    }
+
+    if (req.method === 'DELETE' && p === '/api/contacts') {
+      const contacts = loadContacts();
+      delete contacts[(body.name || '').toLowerCase().trim()];
+      saveContacts(contacts);
+      return json(res, 200, { reply: 'contact removed' });
     }
 
     if (req.method === 'GET' && p === '/api/location') {

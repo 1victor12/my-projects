@@ -311,6 +311,11 @@ async function handle(raw) {
     else if ((m = t.match(/(?:play |search )(.+?)(?: on youtube)$/) || t.match(/^play (.+)$/)))
       { window.open('https://www.youtube.com/results?search_query=' + encodeURIComponent(m[1]), '_blank'); reply = `Playing ${m[1]} on YouTube`; }
 
+    else if (/(?:upload|publish|post).*(?:youtube|my channel)|youtube.*(?:upload|publish)/.test(t)) {
+      let tm = t.match(/(?:titled|titled as|named|as) ["']?(.+?)["']?\s*(?:on youtube)?$/);
+      reply = await api('/api/yt/upload', { title: tm ? tm[1].trim() : '', description: '' });
+    }
+
     else if (/joke/.test(t)) reply = JOKES[Math.floor(Math.random() * JOKES.length)];
     else if (/flip a coin|coin flip/.test(t)) reply = `The coin shows ${Math.random() < .5 ? 'heads' : 'tails'}, sir.`;
     else if ((m = t.match(/roll (?:a )?(?:die|dice)(?:\s*(\d+))?/))) {
