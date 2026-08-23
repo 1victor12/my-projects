@@ -1055,10 +1055,11 @@ const serverLogic = async (req, res) => {
               role: m.role === 'assistant' ? 'model' : 'user',
               parts: [ ...(Array.isArray(m.images) ? m.images.map(img => ({ inline_data: { mime_type: 'image/jpeg', data: String(img).replace(/^data:image\/\w+;base64,/, '') } })) : []), { text: m.content } ]
             }));
+            const sysMsgs2 = (body.messages || []).filter(m => m.role === 'system').map(m => m.content);
             const gr = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:streamGenerateContent?alt=sse&key=${key}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt() }] }, generationConfig: { maxOutputTokens: 400, temperature: 0.7 } }),
+              body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: sysMsgs2.length ? sysMsgs2.join('\n\n') : systemPrompt() }] }, generationConfig: { maxOutputTokens: 400, temperature: 0.7 } }),
               signal: AbortSignal.timeout(120000)
             });
             if (!gr.ok) throw new Error(`gemini ${gr.status}`);
