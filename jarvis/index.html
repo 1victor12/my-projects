@@ -235,9 +235,9 @@ async function handle(raw) {
       reply = await api('/api/find', { name: m[1] });
 
     else if (/^lock( my)?( pc| computer| workstation)?$/.test(t)) reply = await api('/api/lock');
+    else if (/shutdown|shut down|power off/.test(t))
+      reply = await api('/api/shutdown', { confirm: 'yes-jarvis-shutdown' });
     else if (/restart|reboot/.test(t))
-      reply = 'For safety, type: restart confirm — then I will execute it.';
-    else if (/^restart confirm$/.test(t.trim()))
       reply = await api('/api/restart', { confirm: 'yes-jarvis-restart' });
 
     else if ((m = t.match(/^copy (.+)$/))) reply = await api('/api/clipboard', { action: 'set', text: m[1] });
@@ -294,15 +294,24 @@ async function handle(raw) {
     }
 
     else if (/shutdown|shut down|power off/.test(t))
-      reply = 'For safety, type: shutdown confirm — then I will execute it.';
-    else if (/^shutdown confirm$/.test(t.trim()))
       reply = await api('/api/shutdown', { confirm: 'yes-jarvis-shutdown' });
+
+    else if (/forget everything|wipe your memory|clear (your )?(memory|history)|forget our (talks|conversations)/.test(t)) {
+      await fetch('/api/history', { method: 'DELETE' });
+      chatHistory = [chatHistory[0]];
+      document.getElementById('log').innerHTML = '';
+      reply = 'Memory wiped clean, sir. We start fresh.';
+    }
 
     else {
       chatHistory.push({ role: 'user', content: text });
-      if (chatHistory.length > 21) chatHistory = [chatHistory[0], ...chatHistory.slice(-20)];
-      try { reply = await api('/api/chat', { messages: chatHistory }); chatHistory.push({ role: 'assistant', content: reply }); }
-      catch (e) { reply = e.message.includes('Ollama') ? e.message : 'I did not quite catch that, sir. Try "help" commands like open, weather, volume, or system status.'; }
+      if (chatHistory.length > 41) chatHistory = [chatHistory[0], ...chatHistory.slice(-40)];
+      try {
+        reply = await api('/api/chat', { messages: chatHistory });
+        chatHistory.push({ role: 'assistant', content: reply });
+        fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: chatHistory.slice(1) }) }).catch(() => {});
+      }
+      catch (e) { chatHistory.pop(); reply = 'I encountered an error executing that, sir. Is the server running?'; }
     }
   } catch (e) {
     addMsg(e.message, 'err');
@@ -396,6 +405,21 @@ installBtn.addEventListener('click', async () => {
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 addMsg('JARVIS initialized. Click the reactor (or press Space) and speak after the beep-tone of your own courage. Try: "what time is it", "open calculator", "weather", "system status".', 'jarvis');
+
+(async () => {
+  try {
+    const r = await fetch('/api/history');
+    const d = await r.json();
+    if (d.messages && d.messages.length) {
+      chatHistory = [chatHistory[0], ...d.messages];
+      addMsg(`[Memory restored — ${Math.floor(d.messages.length / 2)} past exchanges loaded]`, 'err');
+      for (const m of d.messages.slice(-20)) {
+        if (m.role === 'user') addMsg(m.content, 'you');
+        else if (m.role === 'assistant') addMsg(m.content, 'jarvis');
+      }
+    }
+  } catch {}
+})();
 </script>
 </body>
 </html>

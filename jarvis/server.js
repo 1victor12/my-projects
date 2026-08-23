@@ -170,11 +170,18 @@ async function killProcess(name) {
 }
 
 const REMINDERS_FILE = path.join(ROOT, 'reminders.json');
+const HISTORY_FILE = path.join(ROOT, 'chat_history.json');
 function loadReminders() {
   try { return JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf8')); } catch { return []; }
 }
 function saveReminders(list) {
   fs.writeFileSync(REMINDERS_FILE, JSON.stringify(list, null, 2));
+}
+function loadHistory() {
+  try { return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8')); } catch { return []; }
+}
+function saveHistory(list) {
+  fs.writeFileSync(HISTORY_FILE, JSON.stringify(list.slice(-100), null, 1));
 }
 
 async function addReminder(text, minutes) {
@@ -261,6 +268,12 @@ const serverLogic = async (req, res) => {
         }
       }
 
+      if (p === '/api/history') {
+        if (!Array.isArray(body.messages)) return json(res, 400, { error: 'bad messages' });
+        saveHistory(body.messages.filter(m => m && m.role !== 'system' && typeof m.content === 'string'));
+        return json(res, 200, { reply: 'saved' });
+      }
+
       if (p === '/api/shutdown') {
         if (body.confirm !== 'yes-jarvis-shutdown') return json(res, 400, { error: 'Missing confirm token' });
         await ps('Stop-Computer -Force');
@@ -274,6 +287,15 @@ const serverLogic = async (req, res) => {
 
     if (req.method === 'GET' && p === '/api/reminders') {
       return json(res, 200, { due: checkReminders() });
+    }
+
+    if (req.method === 'GET' && p === '/api/history') {
+      return json(res, 200, { messages: loadHistory() });
+    }
+
+    if (req.method === 'DELETE' && p === '/api/history') {
+      saveHistory([]);
+      return json(res, 200, { reply: 'cleared' });
     }
 
     if (p.endsWith('/')) p += 'index.html';
