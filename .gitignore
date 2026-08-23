@@ -11,3 +11,4 @@ jarvis/cert.pem
 jarvis/key.pem
 jarvis/reminders.json
 auto-push.ps1
+jarvis/chat_history.json
