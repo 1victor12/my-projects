@@ -572,6 +572,12 @@ async function handle(raw) {
 
     else if (/phone (status|battery)|check my phone|where is my phone battery/.test(t))
       reply = await api('/api/phone/status');
+    else if (/where is my phone|phone location|track my phone/.test(t))
+      reply = await api('/api/phone/location');
+    else if (/pc location|computer location|this pc.*location|locate this computer/.test(t)) {
+      const d = await fetch('/api/location').then(r => r.json());
+      reply = `This PC is in ${d.city}, ${d.regionName}, ${d.country}, sir.`;
+    }
     else if (/phone (screenshot|screen shot|shot)/.test(t))
       reply = await api('/api/phone/screenshot');
     else if ((m = t.match(/open (.+?) on my phone/)))

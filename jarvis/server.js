@@ -283,6 +283,38 @@ async function phoneRing() {
   return 'Your phone should be making noise now, sir.';
 }
 
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(`http://ip-api.com/json/${lat},${lon}?fields=city,regionName,country`, { signal: AbortSignal.timeout(8000) });
+    const d = await r.json();
+    if (d.city) return `${d.city}, ${d.regionName}, ${d.country}`;
+  } catch {}
+  return null;
+}
+
+async function phoneLocation() {
+  await phoneSerial();
+  const out = await adb(['shell', 'dumpsys', 'location'], 25000);
+  const patterns = [
+    /last location:\s*Location\[gps[^\]]*?\b([-\d.]+),\s*([-\d.]+)/i,
+    /Location\[gps[^\]]*?\b([-\d.]+),\s*([-\d.]+)/i,
+    /Location\[fused[^\]]*?\b([-\d.]+),\s*([-\d.]+)/i,
+    /Location\[network[^\]]*?\b([-\d.]+),\s*([-\d.]+)/i,
+    /loc\s*=\s*([\-\d.]+)[,\s]+([\-\d.]+)/i
+  ];
+  let lat = null, lon = null;
+  for (const re of patterns) {
+    const m = out.match(re);
+    if (m && Math.abs(parseFloat(m[1])) <= 90 && Math.abs(parseFloat(m[2])) <= 180) {
+      lat = parseFloat(m[1]); lon = parseFloat(m[2]);
+      break;
+    }
+  }
+  if (lat === null) throw new Error('Could not get a GPS fix from the phone, sir. Make sure location services are on and the phone has been used recently.');
+  const area = await reverseGeocode(lat, lon);
+  return `Your phone's last known position: ${lat}, ${lon}${area ? ' (' + area + ')' : ''}, sir.`;
+}
+
 
 let google = null;
 try { google = require('googleapis').google; } catch {}
@@ -490,6 +522,7 @@ Actions:
 {"action":"add_reminder","params":{"text":"call mom","minutes":10}}
 {"action":"phone_status","params":{}} {"action":"phone_screenshot","params":{}}
 {"action":"phone_open_app","params":{"app":"youtube"}} {"action":"find_phone","params":{}}
+{"action":"phone_location","params":{}} {"action":"pc_location","params":{}}
 {"action":"run_command","params":{"command":"powershell code here"}} — for ANYTHING else the PC can do (create files, move folders, type text, open settings pages, install apps...). NEVER use it to format drives or delete system files.
 If NO action is needed, just answer normally in plain text (short, 1-2 sentences).
 Reply with the JSON only when acting. Examples:
@@ -529,6 +562,11 @@ async function executeAction(action, params) {
     case 'phone_screenshot': return phoneScreenshot();
     case 'phone_open_app': return phoneOpen(params.app);
     case 'find_phone': return phoneRing();
+    case 'phone_location': return phoneLocation();
+    case 'pc_location': {
+      const loc = await detectLocation();
+      return `This PC is in ${loc.city}, ${loc.regionName}, ${loc.country} (approx ${loc.lat}, ${loc.lon}), sir.`;
+    }
     case 'run_command': {
       const cmd = params.command || '';
       const out = await ps(cmd);
@@ -757,6 +795,7 @@ const serverLogic = async (req, res) => {
       if (p === '/api/phone/screenshot') return json(res, 200, { reply: await phoneScreenshot() });
       if (p === '/api/phone/open') return json(res, 200, { reply: await phoneOpen(body.app) });
       if (p === '/api/phone/ring') return json(res, 200, { reply: await phoneRing() });
+      if (p === '/api/phone/location') return json(res, 200, { reply: await phoneLocation() });
 
       if (p === '/api/task') return json(res, 200, { reply: await manageTask(body.action, body.text) });
       if (p === '/api/remind') return json(res, 200, { reply: await addReminder(body.text, body.minutes) });
