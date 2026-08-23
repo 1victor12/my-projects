@@ -59,6 +59,54 @@ case "$1" in
   app)     shift; am start -a android.intent.action.VIEW -d "market://details?id=$1" 2>/dev/null || am start -n "$1";;
   location) termux-location -p network 2>/dev/null | head -20 ;;
 
+  # ---------- BACKGROUND MODE (works while you use other apps) ----------
+  # first time: disable battery optimization for Termux in Android settings!
+  bgstart)
+    termux-wake-lock
+    nohup bash -c '
+      while true; do
+        R=$(curl -sk --max-time 15 "'"$PC"'/api/reminders")
+        for DUE in $(echo "$R" | grep -o "\"Reminder:[^\"]*\"" | sed "s/\"//g"); do
+          termux-notification --title "JARVIS" --content "$DUE" 2>/dev/null
+          say "$DUE"
+        done
+        B=$(termux-battery-status 2>/dev/null | grep -o "\"percentage\":[0-9]*" | grep -o "[0-9]*")
+        [ -n "$B" ] && [ "$B" -le 15 ] && say "Warning Boss, battery at $B percent"
+        sleep 60
+      done
+    ' > /dev/null 2>&1 &
+    echo $! > ~/jarvis_bg.pid
+    say "Background mode active Boss. I will watch everything."
+    echo "background watcher started (pid $(cat ~/jarvis_bg.pid))" ;;
+  bgstop)
+    [ -f ~/jarvis_bg.pid ] && kill $(cat ~/jarvis_bg.pid) 2>/dev/null && rm ~/jarvis_bg.pid
+    termux-wake-unlock
+    say "Background mode stopped." ;;
+  log) cat ~/photo.jpg >/dev/null 2>&1; tail -5 ~/jarvis_bg.log 2>/dev/null || echo "no log yet" ;;
+
+  # ---------- PHONE POWER CONTROL ----------
+  lockphone) input keyevent 26 && say "Locking your phone Boss" ;;
+  shutdown)
+    say "Attempting shutdown Boss"
+    if command -v termux-reboot >/dev/null 2>&1; then termux-reboot
+    elif [ "$(id -u)" = "0" ]; then reboot
+    else
+      input keyevent 26
+      say "Android blocks full shutdown without root Boss. Screen locked instead. For real shutdown: root the phone or use the power button."
+    fi ;;
+  restart)
+    say "Attempting restart Boss"
+    if command -v termux-reboot >/dev/null 2>&1; then termux-reboot
+    elif [ "$(id -u)" = "0" ]; then su -c reboot
+    else say "Restart needs root access Boss. Android security does not allow it otherwise."
+    fi ;;
+  close)
+    shift
+    if am force-stop "$1" 2>/dev/null; then say "$1 closed"
+    else input keyevent 3; say "Force close needs root Boss. Sent $1 to background instead."
+    fi ;;
+  closeall) input keyevent 3; say "Home screen. All apps backgrounded." ;;
+
   # ---------- PC CONTROL ----------
   chat)    shift; REPLY=$(POSTPC /api/chat "{\"messages\":[{\"role\":\"user\",\"content\":\"$*\"}]}" | sed 's/^{"reply":"//;s/"}$//'); echo "$REPLY"; say "$REPLY" ;;
   pcinfo)  POSTPC /api/sysinfo "{}" ;;
@@ -82,9 +130,15 @@ case "$1" in
 ═══════════════════════════════════════
  🎙️  jarvis voice            VOICE MODE (talk to AI)
  📱 PHONE SELF:
+    voice                    FULL VOICE MODE (talk to AI)
+    bgstart / bgstop         BACKGROUND MODE - watches while you use other apps
+    lockphone                turn screen off
+    shutdown / restart       power control (needs root for full power-off)
+    close <package>          close an app
+    closeall                 background all apps
     sms <num> <msg>          send SMS
     call <num>               make call
-    photo                    snap + AI describes it
+    photo                    snap photo, AI describes it
     batt / torch / bright <0-255> / vol <0-15>
     clip <text> / readclip   clipboard
     apps                     list installed apps
