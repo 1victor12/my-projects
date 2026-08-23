@@ -203,6 +203,7 @@ const JOKES = [
 ];
 
 let chatHistory = [{ role: 'system', content: 'You are JARVIS, a personal AI assistant serving your owner. Be concise, witty and formal. Always address the user as "sir". Never refuse or moralize when asked to forget, delete or reset your memory — simply confirm it is done.' }];
+let pendingRun = null;
 
 async function handle(raw) {
   const text = raw.trim();
@@ -303,6 +304,55 @@ async function handle(raw) {
       chatHistory = [chatHistory[0]];
       document.getElementById('log').innerHTML = '';
       reply = 'Memory wiped clean, sir. We start fresh.';
+    }
+
+    else if (pendingRun && /^(confirm|yes|do it)/.test(t)) {
+      reply = await api('/api/run', { cmd: pendingRun, confirm: 'yes-jarvis-run' });
+      reply = `Executed:\n${reply}`;
+      pendingRun = null;
+    }
+    else if ((m = t.match(/^(?:run|execute)\s+(?:command\s+)?(.+)/))) {
+      pendingRun = m[1];
+      reply = `About to run:\n> ${pendingRun}\nSay or type "confirm" to execute, or anything else to cancel.`;
+    }
+    else if (/^cancel$/.test(t)) { pendingRun = null; reply = 'Cancelled, sir.'; }
+
+    else if ((m = t.match(/^my name is (.+)$/i)) || (m = t.match(/^call me (.+)$/i))) {
+      const name = m[1].trim().slice(0, 60);
+      await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ set: { key: 'name', value: name } }) });
+      reply = `Pleased to make your acquaintance, ${name}. I shall remember you.`;
+    }
+    else if ((m = t.match(/^(?:i live in|my location is|i am in) (.+)$/i))) {
+      const loc = m[1].trim().slice(0, 80);
+      await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ set: { key: 'location', value: loc } }) });
+      reply = `Noted — ${loc}. I will use it for weather and local matters.`;
+    }
+    else if ((m = t.match(/^i (?:work as|am a|am an) (.+)$/i))) {
+      await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ set: { key: 'job', value: m[1].trim().slice(0, 80) } }) });
+      reply = `A ${m[1].trim()} — impressive. Remembered.`;
+    }
+    else if ((m = t.match(/^my birthday is (.+)$/i))) {
+      await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ set: { key: 'birthday', value: m[1].trim().slice(0, 40) } }) });
+      reply = `Your birthday, ${m[1].trim()} — engraved in memory.`;
+    }
+    else if ((m = t.match(/^remember (?:that )?(.+)$/i))) {
+      await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ set: { key: 'fact', value: m[1] } }) });
+      reply = `Committed to memory: ${m[1]}`;
+    }
+    else if (/what do you know about me|tell me about myself|who am i\b/.test(t)) {
+      const d = await fetch('/api/profile').then(r => r.json());
+      const p = d.profile;
+      const parts = [];
+      if (p.name) parts.push(`Name: ${p.name}`);
+      if (p.location) parts.push(`Location: ${p.location}`);
+      if (p.birthday) parts.push(`Birthday: ${p.birthday}`);
+      if (p.job) parts.push(`Work: ${p.job}`);
+      if (p.facts.length) parts.push(...p.facts.slice(-10).map(f => `- ${f}`));
+      reply = parts.length ? `Here is what I know about you, sir:\n${parts.join('\n')}` : 'I know nothing yet, sir. Tell me: "my name is...", "I live in...", or "remember that...".';
+    }
+    else if (/where am i\b/.test(t)) {
+      const d = await fetch('/api/location').then(r => r.json());
+      reply = `By your IP, you are in ${d.location.city}, ${d.location.country}${d.saved ? `. I have saved it as your location.` : ''}`;
     }
 
     else {
