@@ -46,6 +46,18 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// ---------- Owner-only lockdown ----------
+const CODE_FILE = path.join(ROOT, 'owner_code.txt');
+function ownerCode() {
+  try { return fs.readFileSync(CODE_FILE, 'utf8').trim(); } catch { return 'bigvee2026'; }
+}
+function denyIfNotOwner(code) {
+  if ((code || '').trim() !== ownerCode()) {
+    return 'Access denied. This system can only be shut down by my owner, Big Vee.';
+  }
+  return null;
+}
+
 async function openApp(name) {
   const apps = {
     notepad: 'notepad', calculator: 'calc', calc: 'calc', paint: 'mspaint',
@@ -290,11 +302,18 @@ const PROFILE_FILE = path.join(ROOT, 'profile.json');
 const RUN_LOG = path.join(ROOT, 'run_log.txt');
 const ROUTINES_FILE = path.join(ROOT, 'routines.json');
 const CONTACTS_FILE = path.join(ROOT, 'contacts.json');
+const DEVICES_FILE = path.join(ROOT, 'smart_devices.json');
 function loadContacts() {
   try { return JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8')); } catch { return {}; }
 }
 function saveContacts(c) {
   fs.writeFileSync(CONTACTS_FILE, JSON.stringify(c, null, 2));
+}
+function loadDevices() {
+  try { return JSON.parse(fs.readFileSync(DEVICES_FILE, 'utf8')); } catch { return {}; }
+}
+function saveDevices(d) {
+  fs.writeFileSync(DEVICES_FILE, JSON.stringify(d, null, 2));
 }
 function loadReminders() {
   try { return JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf8')); } catch { return []; }
@@ -359,20 +378,21 @@ async function weather(city) {
   return `${city ? city + ': ' : ''}${cur.temp_C} degrees, ${cur.weatherDesc[0].value}, feels like ${cur.FeelsLikeC}. High ${today.maxtempC}, low ${today.mintempC}. Humidity ${cur.humidity} percent.`;
 }
 
-async function ollamaChat(messages) {
+async function ollamaChat(messages, model) {
   const msgs = messages.filter(m => m.role !== 'system');
-  msgs.unshift({ role: 'system', content: systemPrompt() });
+  const hasImages = msgs.some(m => Array.isArray(m.images) && m.images.length);
+  if (!hasImages) msgs.unshift({ role: 'system', content: systemPrompt() });
   const r = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: process.env.OLLAMA_MODEL || 'llama3.2',
+      model: model || (hasImages ? 'moondream' : 'llama3.2'),
       messages: msgs,
       stream: false,
       keep_alive: '30m',
-      options: { num_predict: 120, temperature: 0.7 }
+      options: { num_predict: hasImages ? 200 : 120, temperature: 0.7 }
     }),
-    signal: AbortSignal.timeout(120000)
+    signal: AbortSignal.timeout(180000)
   });
   if (!r.ok) throw new Error(`ollama ${r.status}`);
   const d = await r.json();
@@ -477,6 +497,8 @@ const serverLogic = async (req, res) => {
       if (p === '/api/lock') return json(res, 200, { reply: await lockPC() });
       if (p === '/api/restart') {
         if (body.confirm !== 'yes-jarvis-restart') return json(res, 400, { error: 'Missing confirm token' });
+        const denied = denyIfNotOwner(body.code);
+        if (denied) return json(res, 403, { error: denied });
         return json(res, 200, { reply: await restartPC() });
       }
       if (p === '/api/clipboard') return json(res, 200, { reply: await clipboardOp(body.action, body.text) });
@@ -571,10 +593,51 @@ const serverLogic = async (req, res) => {
         return json(res, 200, { reply: `Contact "${body.name}" saved.` });
       }
 
+      if (p === '/api/vision') {
+        if (!body.image) return json(res, 400, { error: 'No image' });
+        const img = String(body.image).replace(/^data:image\/\w+;base64,/, '');
+        const reply = await ollamaChat([{ role: 'user', content: body.prompt || 'Describe what you see briefly.', images: [img] }], 'moondream');
+        return json(res, 200, { reply });
+      }
+
+      if (p === '/api/devices') {
+        const devices = loadDevices();
+        if (body.action === 'set') {
+          devices[(body.name || '').toLowerCase().trim()] = { on: body.on || '', off: body.off || '' };
+          saveDevices(devices);
+          return json(res, 200, { reply: `Device "${body.name}" saved.` });
+        }
+        if (body.action === 'delete') {
+          delete devices[(body.name || '').toLowerCase().trim()];
+          saveDevices(devices);
+          return json(res, 200, { reply: 'device removed' });
+        }
+        return json(res, 200, { devices });
+      }
+
+      if (p === '/api/device') {
+        const devices = loadDevices();
+        const dev = devices[(body.name || '').toLowerCase().trim()];
+        if (!dev) {
+          const names = Object.keys(devices);
+          return json(res, 404, { error: names.length ? `Unknown device. Registered: ${names.join(', ')}.` : 'No smart devices registered yet.' });
+        }
+        const cmd = body.state === 'off' ? dev.off : dev.on;
+        if (!cmd) return json(res, 400, { error: `No ${body.state || 'on'} command configured for this device.` });
+        const out = await runCommand(cmd);
+        return json(res, 200, { reply: `${body.name} is now ${body.state === 'off' ? 'OFF' : 'ON'}.${out && out !== '(no output)' ? '\n' + out : ''}` });
+      }
+
       if (p === '/api/shutdown') {
         if (body.confirm !== 'yes-jarvis-shutdown') return json(res, 400, { error: 'Missing confirm token' });
+        const denied = denyIfNotOwner(body.code);
+        if (denied) return json(res, 403, { error: denied });
         await ps('Stop-Computer -Force');
-        return json(res, 200, { reply: 'Shutting down' });
+        return json(res, 200, { reply: 'Authorization confirmed. Shutting down, sir.' });
+      }
+
+      if (p === '/api/verify-owner') {
+        return json(res, 200, { ok: (body.code || '').trim() === ownerCode() });
       }
     }
 

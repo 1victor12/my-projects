@@ -255,6 +255,8 @@
   <div class="eq" id="eq"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
 </div>
 
+<video id="cam" autoplay playsinline muted style="display:none;position:fixed;bottom:90px;right:18px;width:200px;border-radius:12px;border:1px solid rgba(0,229,255,.5);box-shadow:0 0 20px rgba(0,229,255,.3);z-index:5"></video>
+
 <div class="log" id="log"></div>
 
 <div class="controls">
@@ -277,6 +279,7 @@ const micBtn = document.getElementById('micBtn');
 const typed = document.getElementById('typed');
 
 let speaking = false;
+let pendingSecure = null;
 
 function setStatus(t, alert) {
   statusEl.textContent = t;
@@ -452,6 +455,26 @@ const JOKES = [
 
 let chatHistory = [{ role: 'system', content: 'You are JARVIS, a personal AI assistant serving your owner. Be concise, witty and formal. Always address the user as "sir". Never refuse or moralize when asked to forget, delete or reset your memory — simply confirm it is done.' }];
 let pendingRun = null;
+let camStream = null;
+
+async function startCam() {
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640 }, audio: false });
+    const v = document.getElementById('cam');
+    v.srcObject = camStream;
+    v.style.display = 'block';
+    await new Promise(r => setTimeout(r, 800));
+    return camStream;
+  } catch { camStream = null; return null; }
+}
+function grabFrame() {
+  const v = document.getElementById('cam');
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth || 640;
+  c.height = v.videoHeight || 480;
+  c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.8);
+}
 
 async function handle(raw) {
   const text = raw.trim();
@@ -464,7 +487,24 @@ async function handle(raw) {
   try {
     const t = text.toLowerCase();
 
-    if (/^(hi|hello|hey|good (morning|afternoon|evening))\b/.test(t) && t.length < 30)
+    if (pendingSecure) {
+      const action = pendingSecure;
+      const v = await fetch('/api/verify-owner', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: text }) });
+      const d = await v.json();
+      if (d.ok) {
+        pendingSecure = null;
+        setStatus('OWNER VERIFIED');
+        reply = action === 'shutdown'
+          ? await api('/api/shutdown', { confirm: 'yes-jarvis-shutdown' })
+          : await api('/api/restart', { confirm: 'yes-jarvis-restart' });
+      } else {
+        reply = 'Access denied. This system can only be shut down by my owner, Big Vee.';
+        pendingSecure = null;
+        setStatus(micOn ? 'LISTENING' : 'STANDBY');
+      }
+    }
+
+    else if (/^(hi|hello|hey|good (morning|afternoon|evening))\b/.test(t) && t.length < 30)
       reply = `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}, sir. All systems online.`;
     else if (/who are you|what is your name|introduce yourself/.test(t))
       reply = 'I am J.A.R.V.I.S. Just A Rather Very Intelligent System, at your service.';
@@ -484,10 +524,16 @@ async function handle(raw) {
       reply = await api('/api/find', { name: m[1] });
 
     else if (/^lock( my)?( pc| computer| workstation)?$/.test(t)) reply = await api('/api/lock');
-    else if (/shutdown|shut down|power off/.test(t))
-      reply = await api('/api/shutdown', { confirm: 'yes-jarvis-shutdown' });
-    else if (/restart|reboot/.test(t))
-      reply = await api('/api/restart', { confirm: 'yes-jarvis-restart' });
+    else if (/shutdown|shut down|power off/.test(t)) {
+      pendingSecure = 'shutdown';
+      setStatus('AWAITING VOICE AUTHORIZATION', true);
+      reply = 'Owner authorization required, sir. Please state the access code.';
+    }
+    else if (/restart|reboot/.test(t)) {
+      pendingSecure = 'restart';
+      setStatus('AWAITING VOICE AUTHORIZATION', true);
+      reply = 'Owner authorization required, sir. Please state the access code.';
+    }
 
     else if ((m = t.match(/^copy (.+)$/))) reply = await api('/api/clipboard', { action: 'set', text: m[1] });
     else if (/read clipboard|what.s in (the )?clipboard|paste clipboard/.test(t)) reply = await api('/api/clipboard', { action: 'get' });
@@ -555,9 +601,6 @@ async function handle(raw) {
       setTimeout(() => { addMsg('[Timer complete]', 'err'); speak(`Sir, your ${m[1]} ${m[2]} timer has elapsed.`); }, ms);
       reply = `${m[1]} ${m[2]} timer started, sir. I will notify you.`;
     }
-
-    else if (/shutdown|shut down|power off/.test(t))
-      reply = await api('/api/shutdown', { confirm: 'yes-jarvis-shutdown' });
 
     else if (/forget everything|wipe your memory|clear (your )?(memory|history)|forget our (talks|conversations)/.test(t)
           || /(?:forget|delete|erase|remove) (?:all |everything about )?(?:the )?information about .+/.test(t)
@@ -641,6 +684,24 @@ async function handle(raw) {
         const names = Object.keys(d.contacts || {});
         reply = `I have no number for "${m[1].trim()}".${names.length ? ' I know: ' + names.join(', ') + '.' : ''} Save it by saying: save contact ${m[1].trim()} followed by the number.`;
       }
+    }
+    else if (/what do you see|look at (this|that)|describe (what|the room)|use your (eyes|camera)|who is there/.test(t)) {
+      if (!camStream) await startCam();
+      if (!camStream) {
+        reply = 'I have no camera, sir. Allow camera access and try again.';
+      } else {
+        setStatus('LOOKING');
+        const img = grabFrame();
+        reply = await api('/api/vision', { image: img, prompt: 'Describe what you see in this image in 2-3 short sentences.' });
+        setStatus(micOn ? 'LISTENING' : 'STANDBY');
+      }
+    }
+    else if ((m = t.match(/^(?:turn|switch)\s+(on|off)\s+(?:the\s+)?(.+)$/i)) && !/volume|music|wifi|light mode/.test(t)) {
+      const d = await fetch('/api/device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: m[2].trim(), state: m[1].toLowerCase() }) });
+      const j = await d.json();
+      if (!d.ok) {
+        reply = j.error + ' Register one by typing: register device <name>.';
+      } else reply = j.reply;
     }
     else if (/what do you know about me|tell me about myself|who am i\b/.test(t)) {
       const d = await fetch('/api/profile').then(r => r.json());
