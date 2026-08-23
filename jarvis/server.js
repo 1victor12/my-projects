@@ -303,6 +303,7 @@ const RUN_LOG = path.join(ROOT, 'run_log.txt');
 const ROUTINES_FILE = path.join(ROOT, 'routines.json');
 const CONTACTS_FILE = path.join(ROOT, 'contacts.json');
 const DEVICES_FILE = path.join(ROOT, 'smart_devices.json');
+const TRACK_FILE = path.join(ROOT, 'location_track.json');
 function loadContacts() {
   try { return JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8')); } catch { return {}; }
 }
@@ -314,6 +315,26 @@ function loadDevices() {
 }
 function saveDevices(d) {
   fs.writeFileSync(DEVICES_FILE, JSON.stringify(d, null, 2));
+}
+function loadTrack() {
+  try { return JSON.parse(fs.readFileSync(TRACK_FILE, 'utf8')); } catch { return { current: null, history: [] }; }
+}
+function saveTrack(t) {
+  t.history = (t.history || []).slice(-200);
+  fs.writeFileSync(TRACK_FILE, JSON.stringify(t, null, 1));
+}
+let lastGeocode = 0;
+async function reverseGeocode(lat, lon) {
+  if (Date.now() - lastGeocode < 11000) return loadTrack().current && loadTrack().current.address || '';
+  lastGeocode = Date.now();
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=16`, {
+      headers: { 'User-Agent': 'JARVIS-personal-assistant' },
+      signal: AbortSignal.timeout(8000)
+    });
+    const d = await r.json();
+    return d.display_name || '';
+  } catch { return ''; }
 }
 function loadReminders() {
   try { return JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf8')); } catch { return []; }
@@ -626,6 +647,30 @@ const serverLogic = async (req, res) => {
         if (!cmd) return json(res, 400, { error: `No ${body.state || 'on'} command configured for this device.` });
         const out = await runCommand(cmd);
         return json(res, 200, { reply: `${body.name} is now ${body.state === 'off' ? 'OFF' : 'ON'}.${out && out !== '(no output)' ? '\n' + out : ''}` });
+      }
+
+      if (p === '/api/track') {
+        const t = loadTrack();
+        if (body.clear) {
+          saveTrack({ current: null, history: [] });
+          return json(res, 200, { reply: 'Location history cleared, sir.' });
+        }
+        if (typeof body.lat !== 'number' || typeof body.lon !== 'number') {
+          return json(res, 200, { track: t.current });
+        }
+        const prev = t.current;
+        const moved = !prev || Math.abs(prev.lat - body.lat) > 0.0005 || Math.abs(prev.lon - body.lon) > 0.0005;
+        const entry = { lat: body.lat, lon: body.lon, time: Date.now() };
+        let address = prev && prev.address;
+        if (moved) {
+          entry.address = await reverseGeocode(body.lat, body.lon) || (prev && prev.address) || '';
+          t.history.push({ lat: body.lat, lon: body.lon, address: entry.address, time: entry.time });
+        } else {
+          entry.address = prev.address;
+        }
+        t.current = entry;
+        saveTrack(t);
+        return json(res, 200, { ok: true, address: entry.address });
       }
 
       if (p === '/api/shutdown') {

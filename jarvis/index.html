@@ -715,8 +715,20 @@ async function handle(raw) {
       reply = parts.length ? `Here is what I know about you, sir:\n${parts.join('\n')}` : 'I know nothing yet, sir. Tell me: "my name is...", "I live in...", or "remember that...".';
     }
     else if (/where am i\b/.test(t)) {
-      const d = await fetch('/api/location').then(r => r.json());
-      reply = `By your IP, you are in ${d.location.city}, ${d.location.country}${d.saved ? `. I have saved it as your location.` : ''}`;
+      const tr = await fetch('/api/track').then(r => r.json());
+      if (tr.track && tr.track.address) {
+        const mins = Math.round((Date.now() - tr.track.time) / 60000);
+        reply = `You are at: ${tr.track.address}${mins > 2 ? ` (last signal ${mins} min ago)` : ''}.`;
+      } else {
+        const d = await fetch('/api/location').then(r => r.json());
+        reply = `By your IP, you are in ${d.location.city}, ${d.location.country}. For precise GPS tracking, allow location access in the browser.`;
+      }
+    }
+    else if (/where (?:have i|was i)|my (?:movement|location) history|track my location/.test(t)) {
+      const tr = await fetch('/api/track').then(r => r.json());
+      const h = (tr.history || []).slice(-5).reverse();
+      if (!h.length) reply = 'No movement recorded yet, sir. Location tracking starts when you allow location access.';
+      else reply = 'Your recent locations, sir:\n' + h.map(p => `- ${p.address || `${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}`} (${new Date(p.time).toLocaleTimeString()})`).join('\n');
     }
 
     else {
@@ -894,6 +906,19 @@ setInterval(async () => {
     for (const due of (d.due || [])) { addMsg('[REMINDER] ' + due, 'err'); speak('Reminder, sir: ' + due.replace(/^Reminder:\s*/, '')); }
   } catch {}
 }, 30000);
+
+let lastSent = 0;
+function sendPosition(pos) {
+  const now = Date.now();
+  if (now - lastSent < 25000) return;
+  lastSent = now;
+  fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lat: pos.coords.latitude, lon: pos.coords.longitude }) }).catch(() => {});
+}
+function startTracking() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.watchPosition(sendPosition, () => {}, { enableHighAccuracy: true, maximumAge: 15000 });
+}
+startTracking();
 </script>
 </body>
 </html>
