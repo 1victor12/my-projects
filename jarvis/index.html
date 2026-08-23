@@ -866,6 +866,34 @@ setInterval(async () => {
     if (d.state !== 'discharging' || d.percent > 30) lowBatteryWarned = false;
   } catch {}
 }, 60000);
+
+(async () => {
+  const today = new Date().toDateString();
+  if (localStorage.getItem('jarvis.greeted') !== today) {
+    localStorage.setItem('jarvis.greeted', today);
+    await new Promise(r => setTimeout(r, 2500));
+    const h = new Date().getHours();
+    const g = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+    let msg = `${g}, Boss. `;
+    try {
+      const p = await fetch('/api/profile').then(r => r.json());
+      if (p.profile.location) {
+        const w = await fetch('/api/weather?city=' + encodeURIComponent(p.profile.location)).then(r => r.json());
+        msg += w.reply;
+      }
+    } catch {}
+    addMsg('[JARVIS speaks first]', 'err');
+    addMsg(msg, 'jarvis');
+    speak(msg);
+  }
+})();
+
+setInterval(async () => {
+  try {
+    const d = await fetch('/api/reminders').then(r => r.json());
+    for (const due of (d.due || [])) { addMsg('[REMINDER] ' + due, 'err'); speak('Reminder, sir: ' + due.replace(/^Reminder:\s*/, '')); }
+  } catch {}
+}, 30000);
 </script>
 </body>
 </html>

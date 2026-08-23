@@ -20,3 +20,6 @@ jarvis/run_log.txt
 jarvis/client_secret.json
 jarvis/yt_token.json
 jarvis/owner_code.txt
+
+jarvis/contacts.json
+jarvis/smart_devices.json
