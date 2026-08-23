@@ -294,26 +294,50 @@ async function reverseGeocode(lat, lon) {
 
 async function phoneLocation() {
   await phoneSerial();
+
+  // Force a FRESH fix: nudge location providers awake, then open a geo ping
+  await adb(['shell', 'settings', 'put', 'secure', 'location_mode', '3']).catch(() => {});
+  await adb(['shell', 'cmd', 'location', 'providers', 'force-refresh']).catch(() => {});
+  await adb(['shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', 'geo:0,0?q=my+location']).catch(() => {});
+  await new Promise(r => setTimeout(r, 7000));
+
   const out = await adb(['shell', 'dumpsys', 'location'], 25000);
-  const patterns = [
-    /last location:\s*Location\[gps[^\]]*?\b([-\d.]+),\s*([-\d.]+)/i,
-    /Location\[gps[^\]]*?\b([-\d.]+),\s*([-\d.]+)/i,
-    /Location\[fused[^\]]*?\b([-\d.]+),\s*([-\d.]+)/i,
-    /Location\[network[^\]]*?\b([-\d.]+),\s*([-\d.]+)/i,
-    /loc\s*=\s*([\-\d.]+)[,\s]+([\-\d.]+)/i
-  ];
-  let lat = null, lon = null;
-  for (const re of patterns) {
-    const m = out.match(re);
-    if (m && Math.abs(parseFloat(m[1])) <= 90 && Math.abs(parseFloat(m[2])) <= 180) {
-      lat = parseFloat(m[1]); lon = parseFloat(m[2]);
-      break;
-    }
+
+  // Collect every fix: Location[provider lat,lon acc=X et=AGE]
+  const fixes = [];
+  const re = /Location\[([a-z]+)\s+([-\d.]+),([-\d.]+)(?:\s+[^\]]*?acc=([\d.]+))?[^\]]*?\]/gi;
+  let m;
+  while ((m = re.exec(out)) !== null) {
+    const [, provider, la, lo, acc] = m;
+    const lat = parseFloat(la), lon = parseFloat(lo);
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180 || (lat === 0 && lon === 0)) continue;
+    fixes.push({ provider, lat, lon, acc: acc ? parseFloat(acc) : null });
   }
-  if (lat === null) throw new Error('Could not get a GPS fix from the phone, sir. Make sure location services are on and the phone has been used recently.');
-  const area = await reverseGeocode(lat, lon);
-  return `Your phone's last known position: ${lat}, ${lon}${area ? ' (' + area + ')' : ''}, sir.`;
+
+  // Prefer newest/best: gps > fused > network
+  const rank = { gps: 0, fused: 1, network: 2, passive: 3 };
+  fixes.sort((a, b) => {
+    const r = (rank[a.provider] ?? 9) - (rank[b.provider] ?? 9);
+    if (r !== 0) return r;
+    return (a.acc ?? 9999) - (b.acc ?? 9999);
+  });
+  const best = fixes[0];
+
+  if (!best) throw new Error('No GPS fix available, sir. Turn location ON on the phone and use it outside or near a window.');
+
+  // Log to tracking history
+  const t = loadTrack();
+  t.current = { source: 'phone', lat: best.lat, lon: best.lon, acc: best.acc, time: Date.now() };
+  t.history = t.history || [];
+  t.history.push(t.current);
+  saveTrack(t);
+
+  const area = await reverseGeocode(best.lat, best.lon);
+  const map = `https://maps.google.com/?q=${best.lat},${best.lon}`;
+  const accTxt = best.acc ? `, accuracy ${Math.round(best.acc)} meters` : '';
+  return `Real-time phone location, sir:\n${best.lat}, ${best.lon}${area ? '\n' + area : ''}${accTxt}\nMap: ${map}`;
 }
+
 
 
 let google = null;
@@ -631,7 +655,82 @@ async function webKnowledge(question) {
   return ctx.join(' ');
 }
 
-async function ollamaChat(messages, model) {
+function extractJSON(s) {
+  const m = String(s).match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try { return JSON.parse(m[0]); } catch { return null; }
+}
+
+const AGENT_TOOLS = `
+EXECUTION CAPABILITY: You can perform real actions on the owner's PC and the internet. To act, reply ONLY with a single JSON object (nothing else):
+{"action":"open_app","app":"chrome"}
+{"action":"website","url":"tiktok.com"}
+{"action":"run","cmd":"any powershell command"}
+{"action":"web_search","query":"latest news"}
+{"action":"volume","level":50}
+{"action":"screenshot"}
+{"action":"sysinfo"}
+{"action":"weather","city":""}
+{"action":"find_file","name":"report"}
+{"action":"clipboard","text":"copy this"}
+{"action":"media","media_action":"play"}
+{"action":"brightness","level":70}
+{"action":"lock"}
+{"action":"remind","text":"call mama","minutes":15}
+{"action":"routine","name":"morning"}
+{"action":"organize_downloads"}
+{"action":"my_location"}
+{"action":"profile_set","key":"fact","value":"likes pizza"}
+If the request needs no action, reply exactly: {"reply":"your spoken answer"}.
+After each action you will receive its RESULT; then either output another action JSON or finish with {"reply":"..."} summarizing what you did.`;
+
+async function runAgent(userMessages) {
+  const msgs = [{ role: 'system', content: systemPrompt() + '\n' + AGENT_TOOLS }, ...userMessages.filter(m => m.role !== 'system')];
+  const steps = [];
+  let final = '';
+  for (let i = 0; i < 6; i++) {
+    const out = await aiChat(msgs);
+    const j = extractJSON(out);
+    if (!j || j.reply) { final = (j && j.reply) || out.trim(); break; }
+    let result = '';
+    try {
+      switch (j.action) {
+        case 'open_app': result = await openApp(j.app); break;
+        case 'website': result = await openWebsite(j.url); break;
+        case 'run': result = (await runCommand(j.cmd)).slice(0, 1500) || 'done'; break;
+        case 'web_search': { const rs = await webSearch(j.query || ''); result = rs.map(r => `${r.title}: ${r.snippet}`).join('\n').slice(0, 1200) || 'no results'; break; }
+        case 'volume': result = await volume('set', j.level != null ? j.level : 30); break;
+        case 'volume_up': result = await volume('up'); break;
+        case 'volume_down': result = await volume('down'); break;
+        case 'mute': result = await volume('mute'); break;
+        case 'screenshot': result = await screenshot(); break;
+        case 'sysinfo': result = await sysInfo(); break;
+        case 'weather': result = await weather(j.city || loadProfile().location || ''); break;
+        case 'find_file': result = await searchFiles(j.name || ''); break;
+        case 'clipboard': result = await clipboardOp('set', j.text); break;
+        case 'media': result = await media(j.media_action || 'play'); break;
+        case 'brightness': result = await brightness(j.level); break;
+        case 'lock': result = await lockPC(); break;
+        case 'remind': result = await addReminder(j.text, j.minutes); break;
+        case 'routine': result = await runRoutine(j.name); break;
+        case 'organize_downloads': result = await organizeDownloads(); break;
+        case 'my_location': { const t = loadTrack(); result = t.current ? `${t.current.address || `${t.current.lat},${t.current.lon}`}` : await detectLocation().then(l => `${l.city}, ${l.country}`); break; }
+        case 'profile_set': { const prof = loadProfile(); if (j.key === 'fact' && j.value) prof.facts.push(String(j.value).slice(0, 300)); else if (['name', 'location', 'birthday', 'job'].includes(j.key)) prof[j.key] = String(j.value).slice(0, 100); saveProfile(prof); result = 'saved'; break; }
+        default: result = `unknown action "${j.action}"`;
+      }
+      steps.push({ action: j.action, ok: true });
+    } catch (e) {
+      result = 'ERROR: ' + e.message;
+      steps.push({ action: j.action, ok: false });
+    }
+    msgs.push({ role: 'assistant', content: JSON.stringify(j) });
+    msgs.push({ role: 'user', content: `ACTION RESULT: ${result}\nNow either output the next action JSON, or {"reply":"final summary for the owner"}.` });
+  }
+  if (!final) final = 'Task complete, sir.';
+  return { reply: final, steps };
+}
+
+
   const msgs = messages.filter(m => m.role !== 'system');
   const hasImages = msgs.some(m => Array.isArray(m.images) && m.images.length);
   if (!hasImages) {

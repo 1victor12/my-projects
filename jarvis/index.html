@@ -264,7 +264,7 @@
     <button class="hud" id="micBtn">Mic: Off</button>
     <input type="text" id="typed" placeholder='Type a command — try "system status", "weather", "open calculator"...' autocomplete="off">
     <button class="hud" id="sendBtn">Send</button>
-    <button class="hud" id="installBtn" style="display:none">Install App</button>
+    <button class="hud" id="installBtn">Install App</button>
   </div>
   <div class="hint">wake mode: say "jarvis" before a command · voice requires chrome or edge · same-wifi phone access works too</div>
 </div>
@@ -931,16 +931,24 @@ const installBtn = document.getElementById('installBtn');
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   deferredInstall = e;
-  installBtn.style.display = 'inline-block';
 });
 installBtn.addEventListener('click', async () => {
-  if (!deferredInstall) return;
-  deferredInstall.prompt();
-  await deferredInstall.userChoice;
-  deferredInstall = null;
-  installBtn.style.display = 'none';
+  if (deferredInstall) {
+    deferredInstall.prompt();
+    await deferredInstall.userChoice;
+    deferredInstall = null;
+    return;
+  }
+  const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+  addMsg(isMobile
+    ? 'To install JARVIS on your phone: open the browser menu (⋮) and tap "Add to Home screen". It will appear as a real app.'
+    : 'To install JARVIS on this PC: click the install icon in the address bar, or browser menu → "Install JARVIS".', 'jarvis');
+  speak(isMobile ? 'Open your browser menu and tap Add to Home screen, sir.' : 'Use the install icon in your address bar, sir.');
 });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+  installBtn.textContent = 'App Mode ✓';
+}
 
 addMsg('JARVIS initialized. Click the reactor (or press Space) and speak after the beep-tone of your own courage. Try: "what time is it", "open calculator", "weather", "system status".', 'jarvis');
 
