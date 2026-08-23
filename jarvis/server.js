@@ -239,13 +239,21 @@ async function ollamaChat(messages) {
   const r = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: process.env.OLLAMA_MODEL || 'llama3.2:1b', messages: msgs, stream: false }),
+    body: JSON.stringify({
+      model: process.env.OLLAMA_MODEL || 'llama3.2:1b',
+      messages: msgs,
+      stream: false,
+      keep_alive: '30m',
+      options: { num_predict: 120, temperature: 0.7 }
+    }),
     signal: AbortSignal.timeout(120000)
   });
   if (!r.ok) throw new Error(`ollama ${r.status}`);
   const d = await r.json();
   return d.message.content;
 }
+
+const OWNER_FILE = null; // profile.json is the single source of owner identity
 
 async function runCommand(cmd) {
   return new Promise((resolve, reject) => {

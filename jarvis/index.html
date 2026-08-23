@@ -357,7 +357,7 @@ async function handle(raw) {
 
     else {
       chatHistory.push({ role: 'user', content: text });
-      if (chatHistory.length > 41) chatHistory = [chatHistory[0], ...chatHistory.slice(-40)];
+      if (chatHistory.length > 13) chatHistory = [chatHistory[0], ...chatHistory.slice(-12)];
       try {
         reply = await api('/api/chat', { messages: chatHistory });
         chatHistory.push({ role: 'assistant', content: reply });
@@ -400,7 +400,8 @@ function initRecog() {
         phrase = phrase.replace(/^jarvis[, ]*/i, '');
       }
       if (!phrase) continue;
-      if (Date.now() < wakeArmed && !speaking && lower !== 'jarvis') {
+      if (speaking && lower !== 'jarvis') { synth.cancel(); speaking = false; eq.classList.remove('on'); }
+      if (Date.now() < wakeArmed && lower !== 'jarvis') {
         recog.stop();
         handle(phrase).then(() => { if (micOn) { try { recog.start(); } catch {} } });
       }
@@ -426,6 +427,14 @@ reactor.addEventListener('click', () => micBtn.click());
 document.getElementById('sendBtn').addEventListener('click', () => {
   const v = typed.value; typed.value = '';
   handle(v);
+});
+typed.addEventListener('input', () => {
+  if (speaking) {
+    synth.cancel();
+    speaking = false;
+    eq.classList.remove('on');
+    setStatus(micOn ? 'LISTENING' : 'STANDBY');
+  }
 });
 typed.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('sendBtn').click(); });
 window.addEventListener('keydown', e => {
