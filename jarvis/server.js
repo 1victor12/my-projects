@@ -442,6 +442,15 @@ const ROUTINES_FILE = path.join(ROOT, 'routines.json');
 const CONTACTS_FILE = path.join(ROOT, 'contacts.json');
 const DEVICES_FILE = path.join(ROOT, 'smart_devices.json');
 const TRACK_FILE = path.join(ROOT, 'location_track.json');
+const SECRET_FILE = path.join(ROOT, 'secret_key.txt');
+function secretKey() {
+  try { return fs.readFileSync(SECRET_FILE, 'utf8').trim(); } catch { return ''; }
+}
+function isLocal(req) {
+  const ip = req.socket.remoteAddress || '';
+  return ip.includes('127.0.0.1') || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+const DANGEROUS = ['/api/run', '/api/shutdown', '/api/restart', '/api/lock', '/api/kill', '/api/device'];
 function loadContacts() {
   try { return JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8')); } catch { return {}; }
 }
@@ -911,6 +920,17 @@ async function batteryStatus() {
 const serverLogic = async (req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   const q = new URL(req.url, 'http://x').searchParams;
+
+  if (!isLocal(req) && DANGEROUS.some(d => p === d || p.startsWith(d + '?'))) {
+    if ((req.headers['x-key'] || '') !== secretKey()) {
+      return json(res, 403, { error: 'Locked from network. Enter the security code shown on the PC.' });
+    }
+  }
+
+  if (req.method === 'GET' && p === '/api/keyinfo') {
+    if (!isLocal(req)) return json(res, 403, { error: 'PC only' });
+    return json(res, 200, { key: secretKey() });
+  }
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {

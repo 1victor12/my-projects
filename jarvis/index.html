@@ -321,6 +321,35 @@ function addMsg(text, cls) {
 }
 
 const synth = window.speechSynthesis;
+const _origFetch = window.fetch;
+window.fetch = function(input, init) {
+  try {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const k = localStorage.getItem('jarvis.key');
+    if (url.includes('/api/') && k) {
+      init = Object.assign({}, init);
+      init.headers = Object.assign({}, init.headers || {}, { 'X-Key': k });
+      if (!init.headers['Content-Type'] && init.body) init.headers['Content-Type'] = 'application/json';
+    }
+  } catch {}
+  return _origFetch.call(this, input, init);
+};
+
+(async () => {
+  try {
+    const d = await _origFetch('/api/keyinfo').then(r => r.json());
+    if (d.key) localStorage.setItem('jarvis.key', d.key);
+  } catch {}
+})();
+
+function exportChat() {
+  const text = 'JARVIS CONVERSATION LOG - ' + new Date().toLocaleString() + '\n\n' +
+    [...logEl.children].map(m => m.textContent).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  a.download = 'jarvis_chat_' + Date.now() + '.txt';
+  a.click();
+}
 let voice = null;
 let voicesList = [];
 let prefIdx = parseInt(localStorage.getItem('jarvis.prefIdx') || '-1');
@@ -847,6 +876,25 @@ async function handle(raw) {
       localStorage.setItem('jarvis.auto', autoMode ? '1' : '0');
       updateAutoBtn();
       reply = autoMode ? 'Full autonomy engaged, sir. I will now decide and execute on my own.' : 'Autonomy disengaged. Back to taking orders directly.';
+    }
+    else if (/export (?:the )?(?:chat|conversation)|save (?:our )?(?:chat|conversation)/.test(t)) {
+      exportChat();
+      reply = 'Conversation exported, sir.';
+    }
+    else if (/^(?:daily )?briefing$|good morning routine|brief me/.test(t)) {
+      let b = '';
+      try { const w = await api('/api/weather' + (loadProfile ? '' : '')); } catch {}
+      const tr = await fetch('/api/track').then(r => r.json()).catch(() => ({}));
+      const p = await fetch('/api/profile').then(r => r.json()).catch(() => ({}));
+      if (p.profile && p.profile.location) b += await api('/api/weather?city=' + encodeURIComponent(p.profile.location)) + ' ';
+      try {
+        const n = await fetch('/api/search?q=top+world+news+today').then(r => r.json());
+        const heads = (n.results || []).slice(0, 3).map(r2 => r2.title).filter(Boolean);
+        if (heads.length) b += 'In the world: ' + heads.join('. ') + '. ';
+      } catch {}
+      const bat = await fetch('/api/battery').then(r => r.json()).catch(() => null);
+      if (bat && bat.state !== 'plugged') b += `Battery ${bat.percent} percent.`;
+      reply = b.trim() || 'Systems nominal, sir.';
     }
     else if (/what do you know about me|tell me about myself|who am i\b/.test(t)) {
       const d = await fetch('/api/profile').then(r => r.json());

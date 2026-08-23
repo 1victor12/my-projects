@@ -1,0 +1,13 @@
+{
+  "name": "J.A.R.V.I.S. — Big Vee",
+  "short_name": "JARVIS",
+  "description": "Personal AI assistant with full system control",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#03080d",
+  "theme_color": "#00e5ff",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
