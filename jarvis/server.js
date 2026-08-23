@@ -468,6 +468,109 @@ async function geminiChat(messages) {
   return text.trim();
 }
 
+// ---------- Agent mode: AI decides and executes actions itself ----------
+const AGENT_INSTRUCTIONS = `You are JARVIS, an agent that can control the PC and phone. Decide: does the owner's message require an ACTION?
+If yes, reply with ONLY a JSON object (no other text): {"action":"<name>","params":{...}}
+Actions:
+{"action":"open_app","params":{"app":"notepad"}}
+{"action":"open_website","params":{"url":"youtube.com"}}
+{"action":"find_file","params":{"name":"resume"}}
+{"action":"set_volume","params":{"level":40}}
+{"action":"volume_up","params":{}} {"action":"volume_down","params":{}} {"action":"mute","params":{}}
+{"action":"media_play","params":{}} {"action":"media_next","params":{}} {"action":"media_previous","params":{}}
+{"action":"screenshot","params":{}}
+{"action":"system_status","params":{}}
+{"action":"weather","params":{"city":""}}
+{"action":"set_brightness","params":{"level":50}}
+{"action":"wifi_info","params":{}}
+{"action":"list_processes","params":{}}
+{"action":"kill_process","params":{"name":"chrome"}}
+{"action":"clipboard_set","params":{"text":"hello"}} {"action":"clipboard_get","params":{}}
+{"action":"add_task","params":{"text":"buy milk"}} {"action":"list_tasks","params":{}} {"action":"complete_task","params":{"text":"1"}}
+{"action":"add_reminder","params":{"text":"call mom","minutes":10}}
+{"action":"phone_status","params":{}} {"action":"phone_screenshot","params":{}}
+{"action":"phone_open_app","params":{"app":"youtube"}} {"action":"find_phone","params":{}}
+{"action":"run_command","params":{"command":"powershell code here"}} — for ANYTHING else the PC can do (create files, move folders, type text, open settings pages, install apps...). NEVER use it to format drives or delete system files.
+If NO action is needed, just answer normally in plain text (short, 1-2 sentences).
+Reply with the JSON only when acting. Examples:
+User: "make my screen brighter" -> {"action":"set_brightness","params":{"level":80}}
+User: "what is a cat" -> A cat is a small domesticated mammal.
+User: "clean my downloads folder" -> {"action":"run_command","params":{"command":"Get-ChildItem \\"$env:USERPROFILE\\\\Downloads\\" | Remove-Item -Force"}}`;
+
+const FORBIDDEN = /(format |del \/[fs]|rd \/s|Remove-Item\s+.*(-Recurse|-Force)\s+.*(C:\\$|"C:\\\\")|mkfs|diskpart|cipher \/w|vssadmin delete)/i;
+
+async function executeAction(action, params) {
+  params = params || {};
+  switch (action) {
+    case 'open_app': return openApp(params.app);
+    case 'open_website': return openWebsite(params.url);
+    case 'find_file': return searchFiles(params.name);
+    case 'set_volume': return volume('set', params.level);
+    case 'volume_up': return volume('up');
+    case 'volume_down': return volume('down');
+    case 'mute': return volume('mute');
+    case 'media_play': return media('play');
+    case 'media_next': return media('next');
+    case 'media_previous': return media('previous');
+    case 'screenshot': return screenshot();
+    case 'system_status': return sysInfo();
+    case 'weather': return weather(params.city);
+    case 'set_brightness': return brightness(params.level);
+    case 'wifi_info': return wifiInfo();
+    case 'list_processes': return listProcesses();
+    case 'kill_process': return killProcess(params.name);
+    case 'clipboard_set': return clipboardOp('set', params.text);
+    case 'clipboard_get': return clipboardOp('get');
+    case 'add_task': return manageTask('add', params.text);
+    case 'list_tasks': return manageTask('list');
+    case 'complete_task': return manageTask('done', params.text);
+    case 'add_reminder': return addReminder(params.text, params.minutes);
+    case 'phone_status': return phoneStatus();
+    case 'phone_screenshot': return phoneScreenshot();
+    case 'phone_open_app': return phoneOpen(params.app);
+    case 'find_phone': return phoneRing();
+    case 'run_command': {
+      const cmd = params.command || '';
+      if (FORBIDDEN.test(cmd)) return 'That command is too dangerous to execute, sir.';
+      const out = await ps(cmd);
+      fs.appendFileSync(RUN_LOG, `[${new Date().toISOString()}] AGENT: ${cmd}\n${out}\n---\n`);
+      return out ? `Done, sir. Result:\n${out.slice(0, 600)}` : 'Done, sir.';
+    }
+    default: throw new Error(`Unknown action: ${action}`);
+  }
+}
+
+async function agentThink(messages) {
+  const last = [...messages].reverse().find(m => m.role === 'user');
+  if (!last) return null;
+  const agentMsgs = [
+    { role: 'system', content: AGENT_INSTRUCTIONS },
+    { role: 'user', content: last.content }
+  ];
+  let raw;
+  try {
+    const r = await fetch(`${OLLAMA_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'llama3.2', messages: agentMsgs, stream: false, keep_alive: '30m', options: { num_predict: 150, temperature: 0.2 } }),
+      signal: AbortSignal.timeout(120000)
+    });
+    if (!r.ok) return null;
+    raw = (await r.json()).message.content.trim();
+  } catch { return null; }
+
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[0]);
+    if (!parsed.action) return null;
+    const result = await executeAction(parsed.action, parsed.params);
+    return typeof result === 'string' ? result : JSON.stringify(result);
+  } catch (e) {
+    return `I tried to do that but hit an obstacle, sir: ${e.message}`;
+  }
+}
+
 async function aiChat(messages, model) {
   if (geminiKey()) {
     try { return await geminiChat(messages); }
@@ -676,6 +779,8 @@ const serverLogic = async (req, res) => {
               }
             } catch {}
           }
+          const acted = await agentThink(msgs);
+          if (acted) return json(res, 200, { reply: acted });
           const reply = await aiChat(msgs);
           return json(res, 200, { reply });
         } catch (e) {
@@ -801,6 +906,55 @@ const serverLogic = async (req, res) => {
         t.current = entry;
         saveTrack(t);
         return json(res, 200, { ok: true, address: entry.address });
+      }
+
+      if (p === '/api/stream') {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*' });
+        const send = obj => { try { res.write('data: ' + JSON.stringify(obj) + '\n\n'); } catch {} };
+        try {
+          const key = geminiKey();
+          if (key) {
+            const contents = (body.messages || []).filter(m => m.role !== 'system' && m.content).map(m => ({
+              role: m.role === 'assistant' ? 'model' : 'user',
+              parts: [ ...(Array.isArray(m.images) ? m.images.map(img => ({ inline_data: { mime_type: 'image/jpeg', data: String(img).replace(/^data:image\/\w+;base64,/, '') } })) : []), { text: m.content } ]
+            }));
+            const gr = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${key}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt() }] }, generationConfig: { maxOutputTokens: 400, temperature: 0.7 } }),
+              signal: AbortSignal.timeout(120000)
+            });
+            if (!gr.ok) throw new Error(`gemini ${gr.status}`);
+            const reader = gr.body.getReader();
+            const dec = new TextDecoder();
+            let buf = '';
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += dec.decode(value, { stream: true });
+              const lines = buf.split('\n');
+              buf = lines.pop();
+              for (const line of lines) {
+                const s = line.trim();
+                if (!s.startsWith('data:')) continue;
+                const payload = s.slice(5).trim();
+                if (payload === '[DONE]') continue;
+                try {
+                  const j = JSON.parse(payload);
+                  const parts = j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
+                  const txt = parts ? parts.map(pp => pp.text || '').join('') : '';
+                  if (txt) send({ t: txt });
+                } catch {}
+              }
+            }
+          } else {
+            send({ t: await ollamaChat(body.messages || []) });
+          }
+        } catch (e) {
+          send({ error: e.message });
+        }
+        send({ done: true });
+        return res.end();
       }
 
       if (p === '/api/shutdown') {
