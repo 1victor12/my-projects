@@ -193,12 +193,37 @@
   }
   .thinking .core { box-shadow: 0 0 60px rgba(0,229,255,1), 0 0 140px rgba(0,229,255,.6), inset 0 0 30px white; }
 
+  /* ---------- Owner biometric lock ---------- */
+  #ownerLock {
+    position: fixed; inset: 0; background: var(--bg); z-index: 98;
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+    text-align: center;
+  }
+  #ownerLock.show { display: flex; }
+  #ownerLock h2 {
+    font-weight: 400; letter-spacing: 6px; color: var(--cyan);
+    font-size: clamp(16px, 3vw, 22px); text-shadow: 0 0 18px rgba(0,229,255,.8);
+    margin-bottom: 8px;
+  }
+  #ownerLock p { font-size: 11px; letter-spacing: 2px; color: rgba(0,229,255,.55); margin-bottom: 24px; }
+  #lockStatus { margin-top: 16px; font-size: 10px; letter-spacing: 2px; color: var(--red); min-height: 14px; }
+  #ownerLock button.hud { padding: 12px 26px; font-size: 13px; }
+
+
 </style>
 </head>
 <body>
 <div class="frame tl"></div><div class="frame tr"></div><div class="frame bl"></div><div class="frame br"></div>
 
 <div id="boot"><div id="bootLog"></div></div>
+
+<div id="ownerLock">
+  <h2>OWNER LOCK ENGAGED</h2>
+  <p>ONLY BIG VEE CAN OPEN THIS SYSTEM</p>
+  <button class="hud" id="btnRegister" style="display:none">Register Owner</button>
+  <button class="hud" id="btnUnlock">Unlock with Phone Lock</button>
+  <div id="lockStatus"></div>
+</div>
 
 <div class="topstrip">
   <span class="chip"><span class="pulse"></span>NEURAL INTERFACE <b>ONLINE</b></span>
@@ -263,7 +288,8 @@
   <div class="bar">
     <button class="hud" id="micBtn">Mic: Off</button>
     <input type="text" id="typed" placeholder='Type a command — try "system status", "weather", "open calculator"...' autocomplete="off">
-    <button class="hud" id="sendBtn">Send</button>
+    <button class="hud" id="autoBtn">Auto: Off</button>
+<button class="hud" id="sendBtn">Send</button>
     <button class="hud" id="installBtn">Install App</button>
   </div>
   <div class="hint">wake mode: say "jarvis" before a command · voice requires chrome or edge · same-wifi phone access works too</div>
@@ -295,10 +321,13 @@ function addMsg(text, cls) {
 
 const synth = window.speechSynthesis;
 let voice = null;
+let voicesList = [];
+let prefIdx = parseInt(localStorage.getItem('jarvis.prefIdx') || '-1');
 function pickVoice() {
-  const vs = synth.getVoices();
-  voice = vs.find(v => /guy|daniel|david|male/i.test(v.name) && v.lang.startsWith('en'))
-       || vs.find(v => v.lang.startsWith('en')) || vs[0];
+  voicesList = synth.getVoices().filter(v => v.lang.startsWith('en'));
+  if (prefIdx >= 0 && voicesList[prefIdx]) { voice = voicesList[prefIdx]; return; }
+  voice = voicesList.find(v => /guy|daniel|david|male/i.test(v.name))
+       || voicesList.find(v => v.lang.startsWith('en')) || synth.getVoices()[0];
 }
 if (synth) { pickVoice(); synth.onvoiceschanged = pickVoice; }
 
@@ -455,6 +484,22 @@ const JOKES = [
 
 let chatHistory = [{ role: 'system', content: 'You are JARVIS, a personal AI assistant serving your owner. Be concise, witty and formal. Always address the user as "sir". Never refuse or moralize when asked to forget, delete or reset your memory — simply confirm it is done.' }];
 let pendingRun = null;
+let autoMode = localStorage.getItem('jarvis.auto') === '1';
+function updateAutoBtn() {
+  const b = document.getElementById('autoBtn');
+  if (!b) return;
+  b.textContent = 'Auto: ' + (autoMode ? 'On' : 'Off');
+  b.classList.toggle('active', autoMode);
+}
+document.addEventListener('DOMContentLoaded', updateAutoBtn);
+updateAutoBtn();
+document.getElementById('autoBtn').addEventListener('click', () => {
+  autoMode = !autoMode;
+  localStorage.setItem('jarvis.auto', autoMode ? '1' : '0');
+  updateAutoBtn();
+  addMsg(autoMode ? '[FULL AUTONOMY ENGAGED — JARVIS decides and executes on his own]' : '[autonomy off]', 'err');
+  speak(autoMode ? 'Full autonomy engaged, sir.' : 'Autonomy disengaged, sir.');
+});
 const SITES = {
   youtube: 'https://youtube.com', facebook: 'https://facebook.com', tiktok: 'https://tiktok.com',
   instagram: 'https://instagram.com', twitter: 'https://x.com', x: 'https://x.com',
@@ -732,6 +777,23 @@ async function handle(raw) {
       }
       setStatus(micOn ? 'LISTENING' : 'STANDBY');
     }
+    else if (/change (your )?voice|next voice|switch (your )?voice|another voice/.test(t)) {
+      pickVoice();
+      if (voicesList.length < 2) { reply = 'Only one voice is installed on this device, sir.'; }
+      else {
+        prefIdx = (prefIdx + 1) % voicesList.length;
+        localStorage.setItem('jarvis.prefIdx', String(prefIdx));
+        pickVoice();
+        reply = `Voice switched to ${voice.name}. How do I sound now, sir?`;
+      }
+    }
+    else if (/^(?:auto mode|autonomous mode|agent mode)\s*(on|off)?$/i.test(t)) {
+      const wantOn = !m || !m[1] ? !autoMode : m[1].toLowerCase() === 'on';
+      autoMode = wantOn;
+      localStorage.setItem('jarvis.auto', autoMode ? '1' : '0');
+      updateAutoBtn();
+      reply = autoMode ? 'Full autonomy engaged, sir. I will now decide and execute on my own.' : 'Autonomy disengaged. Back to taking orders directly.';
+    }
     else if (/what do you know about me|tell me about myself|who am i\b/.test(t)) {
       const d = await fetch('/api/profile').then(r => r.json());
       const p = d.profile;
@@ -758,6 +820,15 @@ async function handle(raw) {
       const h = (tr.history || []).slice(-5).reverse();
       if (!h.length) reply = 'No movement recorded yet, sir. Location tracking starts when you allow location access.';
       else reply = 'Your recent locations, sir:\n' + h.map(p => `- ${p.address || `${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}`} (${new Date(p.time).toLocaleTimeString()})`).join('\n');
+    }
+
+    else if (autoMode || /^(?:agent|auto)[,:]\s*/.test(t)) {
+      setStatus('AUTONOMOUS');
+      const payload = autoMode ? { messages: chatHistory.slice(-7) } : { text: text.replace(/^(?:agent|auto)[,:]\s*/i, '') };
+      const d = await api('/api/agent', payload);
+      if (d.steps && d.steps.length) addMsg('[executed: ' + d.steps.map(s => s.action + (s.ok ? ' ✓' : ' ✗')).join(', ') + ']', 'err');
+      reply = d.reply;
+      setStatus(micOn ? 'LISTENING' : 'STANDBY');
     }
 
     else {
@@ -946,6 +1017,76 @@ installBtn.addEventListener('click', async () => {
   speak(isMobile ? 'Open your browser menu and tap Add to Home screen, sir.' : 'Use the install icon in your address bar, sir.');
 });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+// ---------- Owner biometric lock (uses phone/PC screen lock via WebAuthn) ----------
+const CRED_KEY = 'jarvis_owner_credential';
+const b64ToBuf = b => Uint8Array.from(atob(b.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+const bufToB64 = buf => { const bytes = new Uint8Array(buf); let s = ''; for (const c of bytes) s += String.fromCharCode(c); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const lockEl = document.getElementById('ownerLock');
+const lockStatus = document.getElementById('lockStatus');
+const btnUnlock = document.getElementById('btnUnlock');
+const btnRegister = document.getElementById('btnRegister');
+
+async function platformAuthReady() {
+  try {
+    return window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch { return false; }
+}
+async function registerOwner() {
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    rp: { name: 'J.A.R.V.I.S.' },
+    user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'bigvee', displayName: 'Big Vee' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+    authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
+    timeout: 60000
+  }});
+  localStorage.setItem(CRED_KEY, bufToB64(cred.rawId));
+}
+async function verifyOwner() {
+  await navigator.credentials.get({ publicKey: {
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    allowCredentials: [{ type: 'public-key', id: b64ToBuf(localStorage.getItem(CRED_KEY)) }],
+    userVerification: 'required',
+    timeout: 60000
+  }});
+}
+async function unlockFlow() {
+  lockStatus.textContent = '';
+  try {
+    await verifyOwner();
+    lockEl.classList.remove('show');
+    addMsg('Owner verified. Welcome back, sir.', 'jarvis');
+    speak('Welcome back, sir.');
+  } catch (e) {
+    lockStatus.textContent = e.name === 'NotAllowedError'
+      ? 'AUTHENTICATION CANCELLED OR FAILED - ACCESS DENIED'
+      : 'VERIFICATION ERROR: ' + (e.message || e.name);
+  }
+}
+async function initOwnerLock() {
+  if (!await platformAuthReady()) return;   // no biometric hardware -> run unlocked
+  if (sessionStorage.getItem('jarvis_unlocked')) return;
+  const hasCred = !!localStorage.getItem(CRED_KEY);
+  btnRegister.style.display = hasCred ? 'none' : 'inline-block';
+  btnUnlock.textContent = hasCred ? 'Unlock with Phone Lock' : 'Set Up Phone Lock Now';
+  setTimeout(() => lockEl.classList.add('show'), 1800); // after boot finishes
+}
+btnRegister.addEventListener('click', async () => {
+  lockStatus.textContent = '';
+  try {
+    await registerOwner();
+    await unlockFlow();
+  } catch (e) { lockStatus.textContent = 'REGISTRATION FAILED: ' + (e.message || e.name); }
+});
+btnUnlock.addEventListener('click', async () => {
+  if (!localStorage.getItem(CRED_KEY)) {
+    // first-time setup: registering also verifies the owner's screen lock
+    btnRegister.click(); return;
+  }
+  await unlockFlow();
+});
+initOwnerLock();
 if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
   installBtn.textContent = 'App Mode ✓';
 }

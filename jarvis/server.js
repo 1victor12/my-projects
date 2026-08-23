@@ -499,7 +499,8 @@ function geminiKey() {
 async function geminiChat(messages) {
   const key = geminiKey();
   if (!key) throw new Error('no-key');
-  const sys = systemPrompt();
+  const sysMsgs = messages.filter(m => m.role === 'system').map(m => m.content);
+  const sys = sysMsgs.length ? sysMsgs.join('\n\n') : systemPrompt();
   const contents = messages.filter(m => m.role !== 'system' && m.content).map(m => ({
     role: m.role === 'assistant' ? 'model' : 'user',
     parts: [
@@ -730,16 +731,17 @@ async function runAgent(userMessages) {
   return { reply: final, steps };
 }
 
-
+async function ollamaChat(messages, model) {
   const msgs = messages.filter(m => m.role !== 'system');
   const hasImages = msgs.some(m => Array.isArray(m.images) && m.images.length);
+  const hasSys = msgs.some(m => m.role === 'system');
   if (!hasImages) {
     try {
       const last = msgs[msgs.length - 1];
       const knowledge = await webKnowledge(last.content);
       if (knowledge) msgs.unshift({ role: 'system', content: `Verified current information from the web (use when relevant): ${knowledge}` });
     } catch {}
-    msgs.unshift({ role: 'system', content: systemPrompt() });
+    if (!hasSys) msgs.unshift({ role: 'system', content: systemPrompt() });
   }
   const r = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
@@ -1090,6 +1092,11 @@ const serverLogic = async (req, res) => {
         }
         send({ done: true });
         return res.end();
+      }
+
+      if (p === '/api/agent') {
+        const out = await runAgent(body.messages || [{ role: 'user', content: body.text || '' }]);
+        return json(res, 200, out);
       }
 
       if (p === '/api/shutdown') {
