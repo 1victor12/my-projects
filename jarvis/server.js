@@ -171,7 +171,72 @@ async function killProcess(name) {
 
 const REMINDERS_FILE = path.join(ROOT, 'reminders.json');
 
-// ---------- YouTube upload pipeline ----------
+// ---------- Phone control via ADB ----------
+const PHONE_APPS = {
+  youtube: 'com.google.android.youtube', whatsapp: 'com.whatsapp', instagram: 'com.instagram.android',
+  camera: 'com.android.camera', chrome: 'com.android.chrome', gmail: 'com.google.android.gm',
+  maps: 'com.google.android.apps.maps', spotify: 'com.spotify.music', tiktok: 'com.zhipin.tencentmobileqq',
+  facebook: 'com.katana.facebook', telegram: 'org.telegram.messenger', phone: 'com.android.dialer',
+  settings: 'com.android.settings', clock: 'com.android.deskclock'
+};
+
+function adb(args, timeout = 20000) {
+  return new Promise((resolve, reject) => {
+    execFile('adb', args, { timeout, windowsHide: true }, (err, stdout, stderr) =>
+      err ? reject(new Error(stderr || err.message)) : resolve((stdout || '').trim()));
+  });
+}
+
+async function phoneSerial() {
+  const out = await adb(['devices']);
+  const line = (out || '').split('\n').map(s => s.trim()).find(l => l.endsWith('\tdevice'));
+  if (!line) throw new Error('No phone connected, sir. Enable USB debugging on the phone and connect it once by cable.');
+  return line.split('\t')[0];
+}
+
+async function phoneStatus() {
+  await phoneSerial();
+  const [model, brand, batRaw] = await Promise.all([
+    adb(['shell', 'getprop', 'ro.product.model']),
+    adb(['shell', 'getprop', 'ro.product.brand']),
+    adb(['shell', 'dumpsys', 'battery'])
+  ]);
+  const level = (batRaw.match(/level:\s*(\d+)/) || [])[1];
+  const charging = /AC powered: true|USB powered: true/.test(batRaw);
+  return `${brand} ${model} is connected${charging ? ' and charging' : ''}, battery at ${level || '?'} percent, sir.`;
+}
+
+async function phoneScreenshot() {
+  await phoneSerial();
+  await adb(['shell', 'screencap', '-p', '/sdcard/jarvis_shot.png']);
+  const desktop = path.join(process.env.USERPROFILE || '', 'Desktop');
+  const dest = path.join(desktop, `phone_${Date.now()}.png`);
+  await adb(['pull', '/sdcard/jarvis_shot.png', dest]);
+  await adb(['shell', 'rm', '/sdcard/jarvis_shot.png']);
+  return `Phone screenshot saved to your desktop, sir.`;
+}
+
+async function phoneOpen(name) {
+  await phoneSerial();
+  const pkg = PHONE_APPS[name.toLowerCase().trim()];
+  if (!pkg) {
+    // try launching by search term anyway
+    await adb(['shell', 'monkey', '-p', `$(pm list packages | grep -i ${name.toLowerCase()})`, '1']).catch(() => {});
+    throw new Error(`I don't know the app "${name}" on your phone, sir. Try: ${Object.keys(PHONE_APPS).join(', ')}.`);
+  }
+  await adb(['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1']);
+  return `Opening ${name} on your phone, sir.`;
+}
+
+async function phoneRing() {
+  await phoneSerial();
+  await adb(['shell', 'media', 'volume', '--set', '15']).catch(() => {});
+  await adb(['shell', 'input', 'keyevent', 'KEYCODE_VOLUME_UP']).catch(() => {});
+  await adb(['shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', 'https://www.youtube.com/results?search_query=loud+alarm+siren']);
+  return 'Your phone should be making noise now, sir.';
+}
+
+
 let google = null;
 try { google = require('googleapis').google; } catch {}
 const YT_SECRET = path.join(ROOT, 'client_secret.json');
@@ -426,6 +491,11 @@ const serverLogic = async (req, res) => {
         if (result.needsAuth) return json(res, 200, { reply: result.message });
         return json(res, 200, { reply: result.message });
       }
+
+      if (p === '/api/phone/status') return json(res, 200, { reply: await phoneStatus() });
+      if (p === '/api/phone/screenshot') return json(res, 200, { reply: await phoneScreenshot() });
+      if (p === '/api/phone/open') return json(res, 200, { reply: await phoneOpen(body.app) });
+      if (p === '/api/phone/ring') return json(res, 200, { reply: await phoneRing() });
       if (p === '/api/remind') return json(res, 200, { reply: await addReminder(body.text, body.minutes) });
       if (p === '/api/volume') return json(res, 200, { reply: await volume(body.action, body.level) });
       if (p === '/api/screenshot') return json(res, 200, { reply: await screenshot() });
@@ -487,11 +557,40 @@ const serverLogic = async (req, res) => {
         return json(res, 200, { reply: await organizeDownloads() });
       }
 
+      if (p === '/api/contacts') {
+        if (body.delete) {
+          const contacts = loadContacts();
+          delete contacts[(body.name || '').toLowerCase().trim()];
+          saveContacts(contacts);
+          return json(res, 200, { reply: 'contact removed' });
+        }
+        if (!body.name || !body.number) return json(res, 400, { error: 'Need name + number (with country code, e.g. 2557...)' });
+        const contacts = loadContacts();
+        contacts[body.name.toLowerCase().trim()] = String(body.number).replace(/[^0-9+]/g, '');
+        saveContacts(contacts);
+        return json(res, 200, { reply: `Contact "${body.name}" saved.` });
+      }
+
       if (p === '/api/shutdown') {
         if (body.confirm !== 'yes-jarvis-shutdown') return json(res, 400, { error: 'Missing confirm token' });
         await ps('Stop-Computer -Force');
         return json(res, 200, { reply: 'Shutting down' });
       }
+    }
+
+    if (req.method === 'GET' && p === '/api/stats') {
+      try {
+        const out = await ps(`
+          $os=Get-CimInstance Win32_OperatingSystem
+          $cpu=[int](Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
+          $tot=[math]::Round($os.TotalVisibleMemorySize/1MB,1)
+          $used=[math]::Round(($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/1MB,1)
+          $disk=[int](Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\" | ForEach-Object {[math]::Round(100-$_.FreeSpace/$_.Size*100)})
+          $bat=Get-CimInstance Win32_Battery
+          Write-Output "$cpu|$used|$tot|$bat.EstimatedChargeRemaining|$disk"`.replace('$bat.EstimatedChargeRemaining', '$(if($bat){$bat.EstimatedChargeRemaining}else{100})'));
+        const parts = out.split('|');
+        return json(res, 200, { cpu: +parts[0] || 0, ramUsed: +parts[1] || 0, ramTotal: +parts[2] || 0, battery: +parts[3] || 100, disk: +parts[4] || 0 });
+      } catch (e) { return json(res, 500, { error: e.message }); }
     }
 
     if (req.method === 'GET' && p === '/api/yt/status') {
@@ -566,21 +665,6 @@ const serverLogic = async (req, res) => {
 
     if (req.method === 'GET' && p === '/api/contacts') {
       return json(res, 200, { contacts: loadContacts() });
-    }
-
-    if (req.method === 'POST' && p === '/api/contacts') {
-      if (!body.name || !body.number) return json(res, 400, { error: 'Need name + number (with country code, e.g. 2557...)' });
-      const contacts = loadContacts();
-      contacts[body.name.toLowerCase().trim()] = String(body.number).replace(/[^0-9+]/g, '');
-      saveContacts(contacts);
-      return json(res, 200, { reply: `Contact "${body.name}" saved.` });
-    }
-
-    if (req.method === 'DELETE' && p === '/api/contacts') {
-      const contacts = loadContacts();
-      delete contacts[(body.name || '').toLowerCase().trim()];
-      saveContacts(contacts);
-      return json(res, 200, { reply: 'contact removed' });
     }
 
     if (req.method === 'GET' && p === '/api/location') {

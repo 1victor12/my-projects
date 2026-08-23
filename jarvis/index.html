@@ -112,19 +112,142 @@
   button.hud:hover { background: rgba(0,229,255,.2); box-shadow: 0 0 14px rgba(0,229,255,.35); }
   button.hud.active { background: rgba(255,179,0,.15); border-color: var(--gold); color: var(--gold); box-shadow: 0 0 14px rgba(255,179,0,.35); }
   .hint { text-align: center; font-size: 11px; color: rgba(0,229,255,.4); letter-spacing: 1px; margin-top: 10px; }
+
+  /* ---------- HUD side panels (Mark-style interface) ---------- */
+  .panel {
+    position: fixed; top: 90px; width: 230px; z-index: 3;
+    font-size: 11px; letter-spacing: 1px;
+    animation: fadein .8s;
+  }
+  .panel.left { left: 22px; }
+  .panel.right { right: 22px; text-align: right; }
+  .panel h3 {
+    color: var(--gold); font-weight: 400; letter-spacing: 3px; font-size: 11px;
+    border-bottom: 1px solid rgba(255,179,0,.35); padding-bottom: 5px; margin-bottom: 9px;
+  }
+  .stat { margin: 10px 0; }
+  .stat .lbl { display: flex; justify-content: space-between; color: rgba(0,229,255,.75); }
+  .bar-track { height: 5px; background: rgba(0,229,255,.12); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--cyan), #7df9ff); border-radius: 3px; box-shadow: 0 0 8px rgba(0,229,255,.7); transition: width .8s ease; }
+  .bar-fill.warn { background: linear-gradient(90deg, var(--gold), #ffd54f); box-shadow: 0 0 8px rgba(255,179,0,.7); }
+  .kv { display: flex; justify-content: space-between; margin: 6px 0; color: rgba(0,229,255,.75); }
+  .kv b { color: #fff; font-weight: 400; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--red); box-shadow: 0 0 8px var(--red); margin-right: 5px; }
+  .dot.on { background: #39ff88; box-shadow: 0 0 8px #39ff88; }
+  @media (max-width: 900px) { .panel { display: none; } }
+
+  /* extra reactor detail rings */
+  .r5 { inset: 20px; border-width: 1px; border-color: transparent; border-left-color: rgba(0,229,255,.6); border-right-color: rgba(0,229,255,.6); animation: spin 12s linear infinite; }
+  .ticks { position: absolute; inset: -14px; animation: spin 40s linear infinite reverse; opacity: .5; }
+
+  /* boot sequence */
+  #boot {
+    position: fixed; inset: 0; background: var(--bg); z-index: 99;
+    display: flex; align-items: center; justify-content: center; flex-direction: column;
+    font-size: 13px; letter-spacing: 3px; color: var(--cyan);
+    transition: opacity .6s; 
+  }
+  #boot.done { opacity: 0; pointer-events: none; }
+  #bootLog { white-space: pre-line; text-align: left; min-height: 120px; color: rgba(0,229,255,.85); text-shadow: 0 0 10px rgba(0,229,255,.5); }
+
+  /* ---------- Neural HUD (ManinaLabs-style) ---------- */
+  .topstrip {
+    display: flex; justify-content: center; flex-wrap: wrap; gap: 8px;
+    padding: 10px 16px 0; z-index: 4;
+  }
+  .chip {
+    font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+    border: 1px solid rgba(0,229,255,.25); border-radius: 20px;
+    padding: 4px 12px; color: rgba(0,229,255,.8);
+    background: rgba(0,229,255,.04); white-space: nowrap;
+    animation: fadein 1s;
+  }
+  .chip b { color: var(--gold); font-weight: 400; }
+  .chip .pulse { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #39ff88; box-shadow: 0 0 6px #39ff88; margin-right: 5px; animation: breathe 1.6s ease-in-out infinite; }
+
+  .statgrid {
+    display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 24px 0; z-index: 4;
+  }
+  .tile {
+    min-width: 96px; text-align: center;
+    border: 1px solid rgba(0,229,255,.2); border-radius: 6px;
+    background: linear-gradient(180deg, rgba(0,229,255,.07), rgba(0,229,255,.02));
+    padding: 8px 12px; animation: fadein 1.2s;
+  }
+  .tile .num { font-size: 17px; color: #fff; text-shadow: 0 0 10px rgba(0,229,255,.7); }
+  .tile .cap { font-size: 8px; letter-spacing: 2px; color: rgba(0,229,255,.55); margin-top: 3px; text-transform: uppercase; }
+
+  /* neural sphere particles */
+  .orb { position: absolute; inset: -30px; pointer-events: none; }
+  .node {
+    position: absolute; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 10px var(--cyan), 0 0 20px rgba(0,229,255,.5);
+    top: 50%; left: 50%; opacity: 0; animation: orbit 8s linear infinite;
+  }
+  @keyframes orbit {
+    0%   { transform: rotate(calc(var(--a) * 1deg)) translateX(var(--r)) rotate(calc(var(--a) * -1deg)) scale(1); opacity: 0; }
+    10%  { opacity: .9; }
+    90%  { opacity: .9; }
+    100% { transform: rotate(calc(var(--a) * 1deg)) translateX(var(--r)) rotate(calc(var(--a) * -1deg)) scale(.4); opacity: 0; }
+  }
+  .thinking .core { box-shadow: 0 0 60px rgba(0,229,255,1), 0 0 140px rgba(0,229,255,.6), inset 0 0 30px white; }
+
 </style>
 </head>
 <body>
 <div class="frame tl"></div><div class="frame tr"></div><div class="frame bl"></div><div class="frame br"></div>
 
+<div id="boot"><div id="bootLog"></div></div>
+
+<div class="topstrip">
+  <span class="chip"><span class="pulse"></span>NEURAL INTERFACE <b>ONLINE</b></span>
+  <span class="chip">ALWAYS LISTENING</span>
+  <span class="chip">MEMORY CORE · <b>BIG VEE</b></span>
+  <span class="chip">DIAGNOSTICS RUNNING</span>
+  <span class="chip">SYSTEM STATUS: <b>ACTIVE</b></span>
+</div>
+
+<div class="panel left">
+  <h3>SYSTEM DIAGNOSTICS</h3>
+  <div class="stat"><div class="lbl"><span>CPU LOAD</span><span id="cpuVal">--%</span></div><div class="bar-track"><div class="bar-fill" id="cpuBar"></div></div></div>
+  <div class="stat"><div class="lbl"><span>MEMORY</span><span id="ramVal">--</span></div><div class="bar-track"><div class="bar-fill" id="ramBar"></div></div></div>
+  <div class="stat"><div class="lbl"><span>DISK C:</span><span id="diskVal">--%</span></div><div class="bar-track"><div class="bar-fill" id="diskBar"></div></div></div>
+  <div class="stat"><div class="lbl"><span>POWER</span><span id="batVal">--%</span></div><div class="bar-track"><div class="bar-fill" id="batBar"></div></div></div>
+</div>
+
+<div class="panel right">
+  <h3>NETWORK & CORE</h3>
+  <div class="kv"><span>LOCAL TIME</span><b id="clock">--:--:--</b></div>
+  <div class="kv"><span>AI BRAIN</span><span><i class="dot" id="brainDot"></i><span id="brainTxt">OFFLINE</span></span></div>
+  <div class="kv"><span>SPEECH ENGINE</span><span><i class="dot on"></i>ONLINE</span></div>
+  <div class="kv"><span>MODEL</span><b id="modelTxt">--</b></div>
+  <div class="kv"><span>UPTIME</span><b id="upTxt">--</b></div>
+</div>
+
 <header>
   <h1>J.A.R.V.I.S.</h1>
   <div class="sub">JUST A RATHER VERY INTELLIGENT SYSTEM</div>
+  <div class="statgrid">
+    <div class="tile"><div class="num" id="tCpu">--%</div><div class="cap">Core Load</div></div>
+    <div class="tile"><div class="num" id="tLat">--ms</div><div class="cap">Latency</div></div>
+    <div class="tile"><div class="num">12 / 12</div><div class="cap">Subsystems</div></div>
+    <div class="tile"><div class="num" id="tRam">--GB</div><div class="cap">Memory Used</div></div>
+    <div class="tile"><div class="num">∞</div><div class="cap">Automation Queue</div></div>
+  </div>
 </header>
 
 <div class="core-zone" id="coreZone">
   <div class="reactor" id="reactor">
-    <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div><div class="ring r4"></div>
+    <svg class="ticks" viewBox="0 0 100 100">
+      <g stroke="#00e5ff" stroke-width=".6">
+        <line x1="50" y1="0" x2="50" y2="6"/><line x1="50" y1="94" x2="50" y2="100"/>
+        <line x1="0" y1="50" x2="6" y2="50"/><line x1="94" y1="50" x2="100" y2="50"/>
+        <line x1="15" y1="15" x2="19" y2="19"/><line x1="81" y1="81" x2="85" y2="85"/>
+        <line x1="85" y1="15" x2="81" y2="19"/><line x1="19" y1="81" x2="15" y2="85"/>
+      </g>
+    </svg>
+    <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div><div class="ring r4"></div><div class="ring r5"></div>
     <div class="core"></div>
   </div>
   <div class="status" id="status">STANDBY — CLICK REACTOR OR PRESS MIC TO SPEAK</div>
@@ -182,7 +305,7 @@ function speak(text) {
   if (voice) u.voice = voice;
   u.rate = 1.02; u.pitch = 0.85;
   u.onstart = () => { speaking = true; eq.classList.add('on'); };
-  u.onend = () => { speaking = false; eq.classList.remove('on'); setStatus(micOn ? 'LISTENING' : 'STANDBY'); };
+  u.onend = () => { speaking = false; eq.classList.remove('on'); if (micOn) { wakeArmed = Date.now() + 30000; setStatus('LISTENING — say "Jarvis" or just speak'); } else setStatus('STANDBY'); };
   synth.speak(u);
 }
 
@@ -223,6 +346,68 @@ async function healthCheck() {
   } catch {}
 }
 setInterval(healthCheck, 10000);
+
+// ---------- Boot sequence ----------
+const bootLines = [
+  'J.A.R.V.I.S. KERNEL v9.4 LOADING...',
+  'CALIBRATING ARC REACTOR ............ OK',
+  'MOUNTING NEURAL CORE (llama3.2) .... OK',
+  'SPEECH SYNTHESIS ENGINE ............ OK',
+  'VOICE RECOGNITION ARRAY ............ OK',
+  'SYSTEM DIAGNOSTICS MODULE .......... OK',
+  'OWNER PROFILE: BIG VEE ............. VERIFIED',
+  'ALL SYSTEMS NOMINAL.'
+];
+(async () => {
+  const bl = document.getElementById('bootLog');
+  for (const line of bootLines) {
+    bl.textContent += line + '\n';
+    await new Promise(r => setTimeout(r, 170));
+  }
+  await new Promise(r => setTimeout(r, 500));
+  document.getElementById('boot').classList.add('done');
+})();
+
+// ---------- Live telemetry ----------
+function setBar(barEl, valEl, pct, extra) {
+  barEl.style.width = Math.min(100, pct) + '%';
+  if (valEl) valEl.textContent = extra || Math.round(pct) + '%';
+  barEl.classList.toggle('warn', pct > 85);
+}
+async function pollStats() {
+  try {
+    const s = await fetch('/api/stats').then(r => r.json());
+    setBar(document.getElementById('cpuBar'), document.getElementById('cpuVal'), s.cpu);
+    const ramPct = s.ramTotal ? (s.ramUsed / s.ramTotal * 100) : 0;
+    setBar(document.getElementById('ramBar'), document.getElementById('ramVal'), ramPct, `${s.ramUsed}/${s.ramTotal}GB`);
+    setBar(document.getElementById('diskBar'), document.getElementById('diskVal'), s.disk);
+    setBar(document.getElementById('batBar'), document.getElementById('batVal'), s.battery);
+  } catch {}
+}
+pollStats();
+setInterval(pollStats, 4000);
+
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+}, 1000);
+
+(async () => {
+  try {
+    const h = await fetch('/api/health').then(r => r.json());
+    const on = h.ollama === 'ok';
+    document.getElementById('brainDot').classList.toggle('on', on);
+    document.getElementById('brainTxt').textContent = on ? 'ONLINE' : 'OFFLINE';
+    document.getElementById('modelTxt').textContent = h.model || '--';
+    if (h.uptime != null) {
+      const m = Math.floor(h.uptime / 60);
+      document.getElementById('upTxt').textContent = m > 0 ? `${m}m` : `${h.uptime}s`;
+      setInterval(() => {
+        const v = document.getElementById('upTxt');
+        if (v.textContent.includes('m')) return;
+      }, 30000);
+    }
+  } catch {}
+})();
 
 const JOKES = [
   'Why did the robot go on vacation? It needed to recharge.',
@@ -311,6 +496,15 @@ async function handle(raw) {
     else if ((m = t.match(/(?:play |search )(.+?)(?: on youtube)$/) || t.match(/^play (.+)$/)))
       { window.open('https://www.youtube.com/results?search_query=' + encodeURIComponent(m[1]), '_blank'); reply = `Playing ${m[1]} on YouTube`; }
 
+    else if (/phone (status|battery)|check my phone|where is my phone battery/.test(t))
+      reply = await api('/api/phone/status');
+    else if (/phone (screenshot|screen shot|shot)/.test(t))
+      reply = await api('/api/phone/screenshot');
+    else if ((m = t.match(/open (.+?) on my phone/)))
+      reply = await api('/api/phone/open', { app: m[1] });
+    else if (/find my phone|ring my phone|call my phone(?! number)/.test(t))
+      reply = await api('/api/phone/ring');
+
     else if (/(?:upload|publish|post).*(?:youtube|my channel)|youtube.*(?:upload|publish)/.test(t)) {
       let tm = t.match(/(?:titled|titled as|named|as) ["']?(.+?)["']?\s*(?:on youtube)?$/);
       reply = await api('/api/yt/upload', { title: tm ? tm[1].trim() : '', description: '' });
@@ -398,6 +592,23 @@ async function handle(raw) {
       const d = await fetch('/api/battery').then(r => r.json());
       reply = d.state === 'plugged' ? 'No battery detected — running on AC power.' : `Battery at ${d.percent} percent and ${d.state}, sir.`;
     }
+    else if ((m = t.match(/^save contact (.+?)(?:\s+with number|\s+number|\s+as)?\s+([+0-9][0-9 ]{6,})$/i))) {
+      await fetch('/api/contacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: m[1].trim(), number: m[2].replace(/ /g, '') }) });
+      reply = `Contact ${m[1].trim()} saved with number ${m[2].replace(/ /g, '')}.`;
+    }
+    else if ((m = t.match(/^send (?:a )?(?:whatsapp|whats app)(?: message)?(?: to )?(.+?)(?: saying| that| telling| :)\s*(.+)$/i))) {
+      const d = await fetch('/api/contacts').then(r => r.json());
+      const wanted = m[1].toLowerCase().trim();
+      const key = Object.keys(d.contacts || {}).find(k => k.includes(wanted) || wanted.includes(k));
+      if (key) {
+        const msg = encodeURIComponent(m[2].trim());
+        window.open(`https://wa.me/${d.contacts[key]}?text=${msg}`, '_blank');
+        reply = `Opening WhatsApp for ${key}, sir. Message ready: "${m[2].trim()}" — press enter to send.`;
+      } else {
+        const names = Object.keys(d.contacts || {});
+        reply = `I have no number for "${m[1].trim()}".${names.length ? ' I know: ' + names.join(', ') + '.' : ''} Save it by saying: save contact ${m[1].trim()} followed by the number.`;
+      }
+    }
     else if (/what do you know about me|tell me about myself|who am i\b/.test(t)) {
       const d = await fetch('/api/profile').then(r => r.json());
       const p = d.profile;
@@ -455,8 +666,16 @@ function initRecog() {
       let phrase = ev.results[i][0].transcript.trim();
       const lower = phrase.toLowerCase();
       if (lower.startsWith('jarvis')) {
-        wakeArmed = Date.now() + 15000;
+        wakeArmed = Date.now() + 30000;
         phrase = phrase.replace(/^jarvis[, ]*/i, '');
+        if (!phrase) {
+          wakeArmed = Date.now() + 30000;
+          addMsg('jarvis', 'you');
+          const r = ['Yes, Boss?', 'At your service, sir.', 'Standing by, sir.'][Math.floor(Math.random() * 3)];
+          addMsg(r, 'jarvis');
+          speak(r);
+          continue;
+        }
       }
       if (!phrase) continue;
       if (speaking && lower !== 'jarvis') { synth.cancel(); speaking = false; eq.classList.remove('on'); }
