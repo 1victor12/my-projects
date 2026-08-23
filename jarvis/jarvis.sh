@@ -66,6 +66,7 @@ case "$1" in
   where)   J "$PC/api/track"; echo ;;
   me)      J "$PC/api/profile"; echo ;;
   open)    shift; POSTPC /api/open "{\"app\":\"$1\"}" ;;
+  site)    shift; POSTPC /api/website "{\"url\":\"$1\"}" ;;
   routine) shift; POSTPC /api/routines "{\"action\":\"run\",\"name\":\"$1\"}" ;;
   organize) POSTPC /api/organize "{}" ;;
   pcrun)   shift; POSTPC /api/run "{\"cmd\":\"$*\",\"confirm\":\"yes-jarvis-run\"}" ;;

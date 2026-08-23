@@ -455,6 +455,18 @@ const JOKES = [
 
 let chatHistory = [{ role: 'system', content: 'You are JARVIS, a personal AI assistant serving your owner. Be concise, witty and formal. Always address the user as "sir". Never refuse or moralize when asked to forget, delete or reset your memory — simply confirm it is done.' }];
 let pendingRun = null;
+const SITES = {
+  youtube: 'https://youtube.com', facebook: 'https://facebook.com', tiktok: 'https://tiktok.com',
+  instagram: 'https://instagram.com', twitter: 'https://x.com', x: 'https://x.com',
+  gmail: 'https://mail.google.com', email: 'https://mail.google.com', maps: 'https://maps.google.com',
+  googlemaps: 'https://maps.google.com', whatsapp: 'https://web.whatsapp.com',
+  netflix: 'https://netflix.com', twitch: 'https://twitch.tv', amazon: 'https://amazon.com',
+  github: 'https://github.com', reddit: 'https://reddit.com', chatgpt: 'https://chatgpt.com',
+  google: 'https://google.com', drive: 'https://drive.google.com', photos: 'https://photos.google.com',
+  translate: 'https://translate.google.com', spotify: 'https://open.spotify.com',
+  telegram: 'https://web.telegram.org', linkedin: 'https://linkedin.com', pinterest: 'https://pinterest.com',
+  wikipedia: 'https://wikipedia.org', stackoverflow: 'https://stackoverflow.com'
+};
 let camStream = null;
 
 async function startCam() {
@@ -498,6 +510,11 @@ async function handle(raw) {
 
     else if ((m = t.match(/^(?:go to |visit )((?:https?:\/\/)?[\w-]+\.[a-z]{2,}(?:\/\S*)?)$/i)))
       reply = await api('/api/website', { url: m[1] });
+    else if ((m = t.match(/^open (.+)$/)) && SITES[m[1].toLowerCase().replace(/\s+/g, '')]) {
+      const site = SITES[m[1].toLowerCase().replace(/\s+/g, '')];
+      window.open(site, '_blank');
+      reply = `Opening ${m[1]}, sir.`;
+    }
     else if ((m = t.match(/^open (.+)$/)) && /[\w-]+\.[a-z]{2,}/i.test(m[1]))
       reply = await api('/api/website', { url: m[1].replace(/^(the|up)?\s*/, '') });
 
