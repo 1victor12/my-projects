@@ -570,6 +570,24 @@ async function handle(raw) {
     else if ((m = t.match(/weather (?:in |for |at )?(.+)$/)) || /^weather$/.test(t.trim()))
       reply = await api('/api/weather' + (m ? '?city=' + encodeURIComponent(m[1]) : ''));
 
+    else if (/^(brief me|morning briefing|daily briefing|good morning jarvis)$/.test(t)) {
+      const [w, sys, tk] = await Promise.all([
+        api('/api/weather').catch(() => ''),
+        api('/api/sysinfo', {}).catch(() => ''),
+        api('/api/task', { action: 'list' }).catch(() => '')
+      ]);
+      reply = `Morning briefing, sir:\n${w}\n${sys}\n${tk}`;
+    }
+
+    else if ((m = t.match(/^(?:add|new)(?: a)?(?: new)? task(?: for me)?(?: to)? (.+)$/i)) || (m = t.match(/^remind me to (.+?)(?: every day|daily)$/i)))
+      reply = await api('/api/task', { action: 'add', text: m[1] });
+    else if (/list my tasks|my tasks|my to-?do|what tasks|show tasks/.test(t))
+      reply = await api('/api/task', { action: 'list' });
+    else if ((m = t.match(/^task (\d+) (?:is )?(?:done|complete[d]?)$/i)) || (m = t.match(/mark task (\d+) as (?:done|complete[d]?)/i)))
+      reply = await api('/api/task', { action: 'done', text: m[1] });
+    else if ((m = t.match(/^task done (.+)$/i)))
+      reply = await api('/api/task', { action: 'done', text: m[1] });
+
     else if ((m = t.match(/(?:search|google)(?: for)? (.+)/)))
       { window.open('https://www.google.com/search?q=' + encodeURIComponent(m[1]), '_blank'); reply = `Searching Google for ${m[1]}`; }
     else if ((m = t.match(/(?:play |search )(.+?)(?: on youtube)$/) || t.match(/^play (.+)$/)))

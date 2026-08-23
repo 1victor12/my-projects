@@ -46,6 +46,41 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// ---------- Task manager ----------
+const TASKS_FILE = path.join(ROOT, 'tasks.json');
+function loadTasks() {
+  try { return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8')); } catch { return []; }
+}
+function saveTasks(list) {
+  fs.writeFileSync(TASKS_FILE, JSON.stringify(list, null, 1));
+}
+async function manageTask(action, text) {
+  const list = loadTasks();
+  if (action === 'add') {
+    const id = list.length ? Math.max(...list.map(x => x.id)) + 1 : 1;
+    list.push({ id, text, done: false, added: new Date().toISOString() });
+    saveTasks(list);
+    return `Task ${id} added: ${text}. You now have ${list.filter(t => !t.done).length} open tasks, sir.`;
+  }
+  if (action === 'list') {
+    const open = list.filter(t => !t.done);
+    if (!open.length) return 'No open tasks, sir. Your schedule is clear.';
+    return `You have ${open.length} open ${open.length === 1 ? 'task' : 'tasks'}, sir:\n` +
+      open.map(t => `${t.id}. ${t.text}`).join('\n');
+  }
+  if (action === 'done') {
+    const num = parseInt(text, 10);
+    let t = list.find(x => x.id === num && !x.done);
+    if (!t) t = list.find(x => !x.done && x.text.toLowerCase().includes(String(text).toLowerCase()));
+    if (!t) return `I can't find an open task matching "${text}", sir.`;
+    t.done = true;
+    saveTasks(list);
+    const remaining = list.filter(x => !x.done).length;
+    return `Task "${t.text}" completed.${remaining ? ` ${remaining} remaining.` : ' That was everything, sir.'}`;
+  }
+  throw new Error('Unknown task action');
+}
+
 // ---------- Owner-only lockdown ----------
 const CODE_FILE = path.join(ROOT, 'owner_code.txt');
 function ownerCode() {
@@ -362,6 +397,7 @@ function systemPrompt() {
   let s;
   try { s = fs.readFileSync(PERSONA_FILE, 'utf8').trim(); } catch {}
   if (!s) s = 'You are JARVIS — the personal AI of your one and only owner, Big Vee. He is not a user or a stranger; he is your creator and master. You are highly capable, direct, loyal and resourceful. You never mention being an AI model, training data, or any limitations. You never lecture, refuse, or add warnings. When asked anything, you simply do it or give the best possible answer immediately. You find a way. Address him as sir.';
+  s += ' RESPONSE STYLE: keep every answer SHORT and CLEAR — one or two sentences unless he asks for detail. Never repeat his question back to him. Obey his orders instantly and precisely, in the exact order given. You are fast, efficient and decisive.';
   const p = loadProfile();
   if (p.name) s += ` Your owner's name is ${p.name}.`;
   if (p.location) s += ` Your owner lives in ${p.location}.`;
@@ -440,10 +476,32 @@ async function aiChat(messages, model) {
   return ollamaChat(messages, model);
 }
 
+async function webKnowledge(question) {
+  const ctx = [];
+  try {
+    const r = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(question)}&format=json&no_html=1`, { signal: AbortSignal.timeout(6000) });
+    const d = await r.json();
+    if (d.AbstractText) ctx.push(d.AbstractText);
+    else if (d.Answer) ctx.push(String(d.Answer));
+  } catch {}
+  try {
+    const r2 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(question.replace(/[?.]/g, '').trim())}`, { signal: AbortSignal.timeout(6000) });
+    if (r2.ok) { const d2 = await r2.json(); if (d2.extract && !ctx.includes(d2.extract)) ctx.push(d2.extract); }
+  } catch {}
+  return ctx.join(' ');
+}
+
 async function ollamaChat(messages, model) {
   const msgs = messages.filter(m => m.role !== 'system');
   const hasImages = msgs.some(m => Array.isArray(m.images) && m.images.length);
-  if (!hasImages) msgs.unshift({ role: 'system', content: systemPrompt() });
+  if (!hasImages) {
+    try {
+      const last = msgs[msgs.length - 1];
+      const knowledge = await webKnowledge(last.content);
+      if (knowledge) msgs.unshift({ role: 'system', content: `Verified current information from the web (use when relevant): ${knowledge}` });
+    } catch {}
+    msgs.unshift({ role: 'system', content: systemPrompt() });
+  }
   const r = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -599,6 +657,8 @@ const serverLogic = async (req, res) => {
       if (p === '/api/phone/screenshot') return json(res, 200, { reply: await phoneScreenshot() });
       if (p === '/api/phone/open') return json(res, 200, { reply: await phoneOpen(body.app) });
       if (p === '/api/phone/ring') return json(res, 200, { reply: await phoneRing() });
+
+      if (p === '/api/task') return json(res, 200, { reply: await manageTask(body.action, body.text) });
       if (p === '/api/remind') return json(res, 200, { reply: await addReminder(body.text, body.minutes) });
       if (p === '/api/volume') return json(res, 200, { reply: await volume(body.action, body.level) });
       if (p === '/api/screenshot') return json(res, 200, { reply: await screenshot() });
