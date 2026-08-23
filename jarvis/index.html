@@ -202,7 +202,7 @@ const JOKES = [
   'I speak fluent English, binary, and sarcasm. Mostly sarcasm.'
 ];
 
-let chatHistory = [{ role: 'system', content: 'You are JARVIS, Tony Stark\'s AI assistant. Be concise, witty and formal.' }];
+let chatHistory = [{ role: 'system', content: 'You are JARVIS, a personal AI assistant serving your owner. Be concise, witty and formal. Always address the user as "sir". Never refuse or moralize when asked to forget, delete or reset your memory — simply confirm it is done.' }];
 
 async function handle(raw) {
   const text = raw.trim();
@@ -296,7 +296,9 @@ async function handle(raw) {
     else if (/shutdown|shut down|power off/.test(t))
       reply = await api('/api/shutdown', { confirm: 'yes-jarvis-shutdown' });
 
-    else if (/forget everything|wipe your memory|clear (your )?(memory|history)|forget our (talks|conversations)/.test(t)) {
+    else if (/forget everything|wipe your memory|clear (your )?(memory|history)|forget our (talks|conversations)/.test(t)
+          || /(?:forget|delete|erase|remove) (?:all |everything about )?(?:the )?information about .+/.test(t)
+          || (/forget|delete|erase|reset/).test(t) && /(memory|history|everything|all information)/.test(t)) {
       await fetch('/api/history', { method: 'DELETE' });
       chatHistory = [chatHistory[0]];
       document.getElementById('log').innerHTML = '';

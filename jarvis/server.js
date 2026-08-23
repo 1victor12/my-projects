@@ -171,6 +171,8 @@ async function killProcess(name) {
 
 const REMINDERS_FILE = path.join(ROOT, 'reminders.json');
 const HISTORY_FILE = path.join(ROOT, 'chat_history.json');
+const PROFILE_FILE = path.join(ROOT, 'profile.json');
+const RUN_LOG = path.join(ROOT, 'run_log.txt');
 function loadReminders() {
   try { return JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf8')); } catch { return []; }
 }
@@ -182,6 +184,26 @@ function loadHistory() {
 }
 function saveHistory(list) {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(list.slice(-100), null, 1));
+}
+function loadProfile() {
+  try {
+    const p = JSON.parse(fs.readFileSync(PROFILE_FILE, 'utf8'));
+    return { name: '', location: '', birthday: '', job: '', facts: [], ...p };
+  } catch { return { name: '', location: '', birthday: '', job: '', facts: [] }; }
+}
+function saveProfile(p) {
+  fs.writeFileSync(PROFILE_FILE, JSON.stringify(p, null, 2));
+}
+function systemPrompt() {
+  const p = loadProfile();
+  let s = 'You are JARVIS, the user\'s personal AI assistant. You are NOT a stranger — you know the user personally and speak warmly, concisely and formally.';
+  if (p.name) s += ` The user\'s name is ${p.name}.`;
+  if (p.location) s += ` They live in ${p.location}.`;
+  if (p.birthday) s += ` Their birthday is ${p.birthday}.`;
+  if (p.job) s += ` They work as ${p.job}.`;
+  if (p.facts && p.facts.length) s += ' Things you know about them: ' + p.facts.slice(-40).join(' | ') + '.';
+  s += ` Current time: ${new Date().toLocaleString()}.`;
+  return s;
 }
 
 async function addReminder(text, minutes) {
@@ -212,15 +234,34 @@ async function weather(city) {
 }
 
 async function ollamaChat(messages) {
+  const msgs = messages.filter(m => m.role !== 'system');
+  msgs.unshift({ role: 'system', content: systemPrompt() });
   const r = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: process.env.OLLAMA_MODEL || 'llama3.2:1b', messages, stream: false }),
+    body: JSON.stringify({ model: process.env.OLLAMA_MODEL || 'llama3.2:1b', messages: msgs, stream: false }),
     signal: AbortSignal.timeout(120000)
   });
   if (!r.ok) throw new Error(`ollama ${r.status}`);
   const d = await r.json();
   return d.message.content;
+}
+
+async function runCommand(cmd) {
+  return new Promise((resolve, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd],
+      { timeout: 60000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        const entry = `[${new Date().toLocaleString()}] ${cmd}\n${(stdout || stderr || '(no output)').slice(0, 4000)}\n---\n`;
+        fs.appendFileSync(RUN_LOG, entry);
+        if (err && !stdout) return reject(new Error((stderr || err.message).slice(0, 1500)));
+        resolve((stdout || stderr || '(command completed, no output)').trim().slice(0, 4000) || '(no output)');
+      });
+  });
+}
+
+async function detectLocation() {
+  const r = await fetch('http://ip-api.com/json/?fields=city,regionName,country,lat,lon', { signal: AbortSignal.timeout(8000) });
+  return await r.json();
 }
 
 const serverLogic = async (req, res) => {
@@ -274,6 +315,25 @@ const serverLogic = async (req, res) => {
         return json(res, 200, { reply: 'saved' });
       }
 
+      if (p === '/api/run') {
+        if (!body.cmd || typeof body.cmd !== 'string') return json(res, 400, { error: 'Missing cmd' });
+        if (body.confirm !== 'yes-jarvis-run') return json(res, 400, { error: 'Missing confirm token' });
+        const out = await runCommand(body.cmd);
+        return json(res, 200, { reply: out.length > 1200 ? out.slice(0, 1200) + '\n… (truncated)' : out });
+      }
+
+      if (p === '/api/profile') {
+        const prof = loadProfile();
+        const { key, value } = body.set || {};
+        if (key === 'fact') {
+          if (value && typeof value === 'string') prof.facts.push(value.trim().slice(0, 300));
+        } else if (['name', 'location', 'birthday', 'job'].includes(key)) {
+          prof[key] = String(value).slice(0, 100);
+        } else return json(res, 400, { error: 'Unknown key' });
+        saveProfile(prof);
+        return json(res, 200, { profile: prof });
+      }
+
       if (p === '/api/shutdown') {
         if (body.confirm !== 'yes-jarvis-shutdown') return json(res, 400, { error: 'Missing confirm token' });
         await ps('Stop-Computer -Force');
@@ -291,6 +351,25 @@ const serverLogic = async (req, res) => {
 
     if (req.method === 'GET' && p === '/api/history') {
       return json(res, 200, { messages: loadHistory() });
+    }
+
+    if (req.method === 'GET' && p === '/api/profile') {
+      return json(res, 200, { profile: loadProfile() });
+    }
+
+    if (req.method === 'DELETE' && p === '/api/profile') {
+      saveProfile({ name: '', location: '', birthday: '', job: '', facts: [] });
+      return json(res, 200, { reply: 'profile cleared' });
+    }
+
+    if (req.method === 'GET' && p === '/api/location') {
+      const loc = await detectLocation();
+      const prof = loadProfile();
+      if (!prof.location && loc.city) {
+        prof.location = `${loc.city}, ${loc.country}`;
+        saveProfile(prof);
+      }
+      return json(res, 200, { location: loc, saved: prof.location });
     }
 
     if (req.method === 'DELETE' && p === '/api/history') {
