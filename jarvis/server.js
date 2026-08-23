@@ -292,9 +292,56 @@ async function reverseGeocode(lat, lon) {
   return null;
 }
 
+// ---------- Phone file access ----------
+const PHONE_DIRS = { downloads: '/sdcard/Download', download: '/sdcard/Download', dcim: '/sdcard/DCIM', pictures: '/sdcard/Pictures', movies: '/sdcard/Movies', music: '/sdcard/Music', documents: '/sdcard/Documents', whatsapp: '/sdcard/WhatsApp', root: '/sdcard' };
+
+async function phoneList(dir) {
+  await phoneSerial();
+  const key = (dir || 'downloads').toLowerCase().trim().replace(/^\/sdcard\/?/, '').replace(/\/$/, '');
+  const path_ = PHONE_DIRS[key] || (dir.startsWith('/') ? dir : `/sdcard/${key}`);
+  const out = await adb(['shell', 'ls', '-1', path_], 20000);
+  if (!out || /No such file or directory/i.test(out)) throw new Error(`Folder "${path_}" not found on the phone, sir.`);
+  const items = out.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 60);
+  return `Contents of ${path_}:\n${items.join('\n')}`;
+}
+
+async function phoneGetFile(name) {
+  await phoneSerial();
+  let remote = name;
+  if (!name.startsWith('/')) {
+    const found = await adb(['shell', `find /sdcard -iname "*${name.replace(/['"\\]/g, '')}*" -type f 2>/dev/null | head -5`], 30000);
+    if (!found) throw new Error(`No file matching "${name}" found on the phone, sir.`);
+    remote = found.split('\n')[0].trim();
+  }
+  const destDir = path.join(process.env.USERPROFILE || '', 'Desktop', 'phone_files');
+  fs.mkdirSync(destDir, { recursive: true });
+  const dest = path.join(destDir, path.basename(remote));
+  await adb(['pull', remote, dest], 120000);
+  return `Pulled "${remote}" from your phone to Desktop\\phone_files on this PC, sir.`;
+}
+
+async function phonePushFile(localName) {
+  await phoneSerial();
+  const candidates = [
+    path.join(process.env.USERPROFILE || '', 'Desktop', localName),
+    path.join(process.env.USERPROFILE || '', 'Downloads', localName),
+    path.join(process.env.USERPROFILE || '', 'Documents', localName)
+  ];
+  const local = candidates.find(c => fs.existsSync(c));
+  if (!local) throw new Error(`"${localName}" not found in Desktop, Downloads or Documents of this PC, sir.`);
+  await adb(['push', local, '/sdcard/Download/'], 120000);
+  return `Sent "${localName}" to your phone's Download folder, sir.`;
+}
+
+async function phoneDeleteFile(remotePath) {
+  await phoneSerial();
+  const target = remotePath.startsWith('/') ? remotePath : `/sdcard/${remotePath}`;
+  await adb(['shell', 'rm', `"${target}"`], 15000);
+  return `Deleted "${target}" from your phone, sir.`;
+}
+
 async function phoneLocation() {
   await phoneSerial();
-
   // Force a FRESH fix: nudge location providers awake, then open a geo ping
   await adb(['shell', 'settings', 'put', 'secure', 'location_mode', '3']).catch(() => {});
   await adb(['shell', 'cmd', 'location', 'providers', 'force-refresh']).catch(() => {});
@@ -548,6 +595,9 @@ Actions:
 {"action":"phone_status","params":{}} {"action":"phone_screenshot","params":{}}
 {"action":"phone_open_app","params":{"app":"youtube"}} {"action":"find_phone","params":{}}
 {"action":"phone_location","params":{}} {"action":"pc_location","params":{}}
+{"action":"list_phone_files","params":{"path":"downloads"}}
+{"action":"get_phone_file","params":{"name":"photo.jpg"}} {"action":"send_phone_file","params":{"name":"doc.pdf"}}
+{"action":"delete_phone_file","params":{"path":"/sdcard/Download/old.txt"}}
 {"action":"run_command","params":{"command":"powershell code here"}} — for ANYTHING else the PC can do (create files, move folders, type text, open settings pages, install apps...). NEVER use it to format drives or delete system files.
 If NO action is needed, just answer normally in plain text (short, 1-2 sentences).
 Reply with the JSON only when acting. Examples:
@@ -588,6 +638,10 @@ async function executeAction(action, params) {
     case 'phone_open_app': return phoneOpen(params.app);
     case 'find_phone': return phoneRing();
     case 'phone_location': return phoneLocation();
+    case 'list_phone_files': return phoneList(params.path);
+    case 'get_phone_file': return phoneGetFile(params.name);
+    case 'send_phone_file': return phonePushFile(params.name);
+    case 'delete_phone_file': return phoneDeleteFile(params.path);
     case 'pc_location': {
       const loc = await detectLocation();
       return `This PC is in ${loc.city}, ${loc.regionName}, ${loc.country} (approx ${loc.lat}, ${loc.lon}), sir.`;
@@ -897,6 +951,10 @@ const serverLogic = async (req, res) => {
       if (p === '/api/phone/open') return json(res, 200, { reply: await phoneOpen(body.app) });
       if (p === '/api/phone/ring') return json(res, 200, { reply: await phoneRing() });
       if (p === '/api/phone/location') return json(res, 200, { reply: await phoneLocation() });
+      if (p === '/api/phone/files') return json(res, 200, { reply: await phoneList(body.path) });
+      if (p === '/api/phone/getfile') return json(res, 200, { reply: await phoneGetFile(body.name) });
+      if (p === '/api/phone/pushfile') return json(res, 200, { reply: await phonePushFile(body.name) });
+      if (p === '/api/phone/delete') return json(res, 200, { reply: await phoneDeleteFile(body.path) });
 
       if (p === '/api/task') return json(res, 200, { reply: await manageTask(body.action, body.text) });
       if (p === '/api/remind') return json(res, 200, { reply: await addReminder(body.text, body.minutes) });

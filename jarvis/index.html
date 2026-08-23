@@ -636,6 +636,14 @@ async function handle(raw) {
       reply = await api('/api/phone/status');
     else if (/where is my phone|phone location|track my phone/.test(t))
       reply = await api('/api/phone/location');
+    else if ((m = t.match(/(?:list|show|open)(?: the)? (?:files|folder|contents)? ?(?:in |of )?(?:my )?phone ?(downloads?|dcim|pictures?|movies?|music|documents|whatsapp)?/i)) && !/app/.test(t))
+      reply = await api('/api/phone/files', { path: m[1] || 'downloads' });
+    else if ((m = t.match(/(?:get|download|pull) (.+?) from my phone/i)))
+      reply = await api('/api/phone/getfile', { name: m[1] });
+    else if ((m = t.match(/(?:send|copy|push) (.+?) to my phone/i)))
+      reply = await api('/api/phone/pushfile', { name: m[1] });
+    else if ((m = t.match(/delete (.+?) from my phone/i)))
+      reply = await api('/api/phone/delete', { path: m[1].startsWith('/') ? m[1] : '/sdcard/' + m[1] });
     else if (/pc location|computer location|this pc.*location|locate this computer/.test(t)) {
       const d = await fetch('/api/location').then(r => r.json());
       reply = `This PC is in ${d.city}, ${d.regionName}, ${d.country}, sir.`;
