@@ -431,6 +431,20 @@ const serverLogic = async (req, res) => {
       }
     }
 
+    if (req.method === 'GET' && p === '/api/health') {
+      const health = { server: 'ok', ollama: 'down', uptime: Math.round(process.uptime()), time: new Date().toISOString() };
+      try {
+        const r = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(4000) });
+        if (r.ok) {
+          health.ollama = 'ok';
+          const models = (await r.json()).models || [];
+          health.model = process.env.OLLAMA_MODEL || 'llama3.2:1b';
+          health.modelLoaded = models.some(m => m.name === health.model);
+        }
+      } catch {}
+      return json(res, 200, health);
+    }
+
     if (req.method === 'GET' && p === '/api/weather') {
       return json(res, 200, { reply: await weather(q.get('city')) });
     }
