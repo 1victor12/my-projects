@@ -1,4 +1,16 @@
 {
- "current": null,
- "history": []
+ "current": {
+  "lat": -6.1379565,
+  "lon": 39.5130189,
+  "time": 1787449103166,
+  "address": "Pingwe, Kati, Unguja Kusini, Zanzibar زنجبار, 72211, Tanzania"
+ },
+ "history": [
+  {
+   "lat": -6.1378969,
+   "lon": 39.5129458,
+   "address": "Pingwe, Kati, Unguja Kusini, Zanzibar زنجبار, 72211, Tanzania",
+   "time": 1787448798569
+  }
+ ]
 }

@@ -399,6 +399,47 @@ async function weather(city) {
   return `${city ? city + ': ' : ''}${cur.temp_C} degrees, ${cur.weatherDesc[0].value}, feels like ${cur.FeelsLikeC}. High ${today.maxtempC}, low ${today.mintempC}. Humidity ${cur.humidity} percent.`;
 }
 
+function geminiKey() {
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  try { return fs.readFileSync(path.join(ROOT, 'gemini_key.txt'), 'utf8').trim(); } catch { return ''; }
+}
+
+async function geminiChat(messages) {
+  const key = geminiKey();
+  if (!key) throw new Error('no-key');
+  const sys = systemPrompt();
+  const contents = messages.filter(m => m.role !== 'system' && m.content).map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [
+      ...(Array.isArray(m.images) ? m.images.map(img => ({ inline_data: { mime_type: 'image/jpeg', data: String(img).replace(/^data:image\/\w+;base64,/, '') } })) : []),
+      { text: m.content }
+    ]
+  }));
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents,
+      systemInstruction: { parts: [{ text: sys }] },
+      generationConfig: { maxOutputTokens: 400, temperature: 0.7 }
+    }),
+    signal: AbortSignal.timeout(45000)
+  });
+  if (!r.ok) throw new Error(`gemini ${r.status}`);
+  const d = await r.json();
+  const text = d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts[0].text;
+  if (!text) throw new Error('gemini empty');
+  return text.trim();
+}
+
+async function aiChat(messages, model) {
+  if (geminiKey()) {
+    try { return await geminiChat(messages); }
+    catch (e) { if (String(e.message).includes('fetch')) { /* offline -> fall through */ } else if (!String(e.message).includes('gemini')) throw e; }
+  }
+  return ollamaChat(messages, model);
+}
+
 async function ollamaChat(messages, model) {
   const msgs = messages.filter(m => m.role !== 'system');
   const hasImages = msgs.some(m => Array.isArray(m.images) && m.images.length);
@@ -546,7 +587,7 @@ const serverLogic = async (req, res) => {
 
       if (p === '/api/chat') {
         try {
-          const reply = await ollamaChat(body.messages || []);
+          const reply = await aiChat(body.messages || []);
           return json(res, 200, { reply });
         } catch (e) {
           return json(res, 503, { error: 'No LLM backend found. Install Ollama (ollama.com), run: ollama pull llama3.2, then restart.' });
@@ -617,7 +658,7 @@ const serverLogic = async (req, res) => {
       if (p === '/api/vision') {
         if (!body.image) return json(res, 400, { error: 'No image' });
         const img = String(body.image).replace(/^data:image\/\w+;base64,/, '');
-        const reply = await ollamaChat([{ role: 'user', content: body.prompt || 'Describe what you see briefly.', images: [img] }], 'moondream');
+        const reply = await aiChat([{ role: 'user', content: body.prompt || 'Describe what you see briefly.', images: [img] }], 'moondream');
         return json(res, 200, { reply });
       }
 
