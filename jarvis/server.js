@@ -496,7 +496,7 @@ function geminiKey() {
   try { return fs.readFileSync(path.join(ROOT, 'gemini_key.txt'), 'utf8').trim(); } catch { return ''; }
 }
 
-async function geminiChat(messages) {
+async function geminiChat(messages, jsonMode) {
   const key = geminiKey();
   if (!key) throw new Error('no-key');
   const sysMsgs = messages.filter(m => m.role === 'system').map(m => m.content);
@@ -514,7 +514,7 @@ async function geminiChat(messages) {
     body: JSON.stringify({
       contents,
       systemInstruction: { parts: [{ text: sys }] },
-      generationConfig: { maxOutputTokens: 400, temperature: 0.7 }
+      generationConfig: Object.assign({ maxOutputTokens: 400, temperature: 0.7 }, jsonMode ? { responseMimeType: 'application/json' } : {})
     }),
     signal: AbortSignal.timeout(45000)
   });
@@ -633,9 +633,9 @@ async function agentThink(messages) {
   }
 }
 
-async function aiChat(messages, model) {
+async function aiChat(messages, model, jsonMode) {
   if (geminiKey()) {
-    try { return await geminiChat(messages); }
+    try { return await geminiChat(messages, jsonMode); }
     catch (e) { if (String(e.message).includes('fetch')) { /* offline -> fall through */ } else if (!String(e.message).includes('gemini')) throw e; }
   }
   return ollamaChat(messages, model);
@@ -690,7 +690,7 @@ async function runAgent(userMessages) {
   const steps = [];
   let final = '';
   for (let i = 0; i < 6; i++) {
-    const out = await aiChat(msgs);
+    const out = await aiChat(msgs, null, true);
     const j = extractJSON(out);
     if (!j || j.reply) { final = (j && j.reply) || out.trim(); break; }
     let result = '';
