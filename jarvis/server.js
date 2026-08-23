@@ -480,6 +480,25 @@ async function detectLocation() {
   return await r.json();
 }
 
+async function webSearch(q) {
+  const r = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+    signal: AbortSignal.timeout(12000)
+  });
+  const html = await r.text();
+  const results = [];
+  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:class="result__snippet"[^>]*>([\s\S]*?)<\/a>)?/g;
+  let m;
+  while ((m = re.exec(html)) && results.length < 6) {
+    let url = m[1];
+    const udm = url.match(/uddg=([^&]+)/);
+    if (udm) url = decodeURIComponent(udm[1]);
+    const clean = s => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim();
+    results.push({ title: clean(m[2]), url, snippet: m[3] ? clean(m[3]).slice(0, 300) : '' });
+  }
+  return results;
+}
+
 function loadRoutines() {
   try { return JSON.parse(fs.readFileSync(ROUTINES_FILE, 'utf8')); } catch { return {}; }
 }
@@ -587,7 +606,17 @@ const serverLogic = async (req, res) => {
 
       if (p === '/api/chat') {
         try {
-          const reply = await aiChat(body.messages || []);
+          let msgs = body.messages || [];
+          const lastUser = [...msgs].reverse().find(m => m.role === 'user');
+          if (lastUser && /\b(latest|news|today|current|right now|price of|score|who won|stock|weather in|release|update on)\b/i.test(lastUser.content)) {
+            try {
+              const results = await webSearch(lastUser.content);
+              if (results.length) {
+                msgs = [{ role: 'system', content: 'Live web results for the question:\n' + results.map((r2, i) => `[${i + 1}] ${r2.title}: ${r2.snippet} (${r2.url})`).join('\n') }, ...msgs];
+              }
+            } catch {}
+          }
+          const reply = await aiChat(msgs);
           return json(res, 200, { reply });
         } catch (e) {
           return json(res, 503, { error: 'No LLM backend found. Install Ollama (ollama.com), run: ollama pull llama3.2, then restart.' });
@@ -806,6 +835,10 @@ const serverLogic = async (req, res) => {
     if (req.method === 'DELETE' && p === '/api/profile') {
       saveProfile({ name: '', location: '', birthday: '', job: '', facts: [] });
       return json(res, 200, { reply: 'profile cleared' });
+    }
+
+    if (req.method === 'GET' && p === '/api/search') {
+      return json(res, 200, { results: await webSearch(q.get('q') || '') });
     }
 
     if (req.method === 'GET' && p === '/api/battery') {

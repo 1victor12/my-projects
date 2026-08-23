@@ -703,6 +703,17 @@ async function handle(raw) {
         reply = j.error + ' Register one by typing: register device <name>.';
       } else reply = j.reply;
     }
+    else if ((m = t.match(/^(?:look ?up|search the (?:web|internet) for|find out)\s+(.+)$/i))) {
+      setStatus('SEARCHING THE WORLD');
+      const d = await fetch('/api/search?q=' + encodeURIComponent(m[1])).then(r => r.json());
+      const results = d.results || [];
+      if (!results.length) { reply = 'The internet gave me nothing on that, sir.'; }
+      else {
+        const context = 'Web results:\n' + results.map((r2, i) => `[${i + 1}] ${r2.title}: ${r2.snippet}`).join('\n');
+        reply = await api('/api/chat', { messages: [{ role: 'user', content: `Answer this question using the web results below. Be concise and mention sources briefly.\n\nQuestion: ${m[1]}\n\n${context}` }] });
+      }
+      setStatus(micOn ? 'LISTENING' : 'STANDBY');
+    }
     else if (/what do you know about me|tell me about myself|who am i\b/.test(t)) {
       const d = await fetch('/api/profile').then(r => r.json());
       const p = d.profile;
