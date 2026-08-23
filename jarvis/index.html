@@ -339,6 +339,30 @@ async function handle(raw) {
       await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ set: { key: 'fact', value: m[1] } }) });
       reply = `Committed to memory: ${m[1]}`;
     }
+    else if ((m = t.match(/^(?:run|start|launch)\s+(?:the\s+)?(.+?)\s*(?:routine|mode)$/i))) {
+      reply = await api('/api/routines', { action: 'run', name: m[1] });
+    }
+    else if ((m = t.match(/^create\s+(?:a\s+)?(.+?)\s*routine(?:\s+with\s+(.+))?$/i))) {
+      const apps = m[2] ? m[2].split(/\s*(?:,|and|then|\+)\s*/).filter(Boolean) : [];
+      if (!apps.length) {
+        const d = await fetch('/api/profile').then(r => r.json());
+        reply = `Tell me which apps, sir. Example: "create ${m[1]} routine with chrome, spotify and notepad".`;
+      } else {
+        reply = await api('/api/routines', { action: 'create', name: m[1], apps });
+      }
+    }
+    else if (/list (?:my )?routines|show routines|my routines/.test(t)) {
+      const d = await fetch('/api/routines').then(r => r.json());
+      const names = Object.keys(d.routines || {});
+      reply = names.length ? `Your routines, sir: ${names.join(', ')}.` : 'No routines yet, sir. Say "create morning routine with chrome and spotify".';
+    }
+    else if (/organize (?:my )?downloads|clean (?:my )?downloads/.test(t)) {
+      reply = await api('/api/organize');
+    }
+    else if (/battery/.test(t)) {
+      const d = await fetch('/api/battery').then(r => r.json());
+      reply = d.state === 'plugged' ? 'No battery detected — running on AC power.' : `Battery at ${d.percent} percent and ${d.state}, sir.`;
+    }
     else if (/what do you know about me|tell me about myself|who am i\b/.test(t)) {
       const d = await fetch('/api/profile').then(r => r.json());
       const p = d.profile;
@@ -481,6 +505,19 @@ addMsg('JARVIS initialized. Click the reactor (or press Space) and speak after t
     }
   } catch {}
 })();
+
+let lowBatteryWarned = false;
+setInterval(async () => {
+  try {
+    const d = await fetch('/api/battery').then(r => r.json());
+    if (d.state === 'discharging' && d.percent <= 20 && !lowBatteryWarned) {
+      lowBatteryWarned = true;
+      addMsg(`[Battery low: ${d.percent}%]`, 'err');
+      speak(`Boss, battery at ${d.percent} percent. Please connect power.`);
+    }
+    if (d.state !== 'discharging' || d.percent > 30) lowBatteryWarned = false;
+  } catch {}
+}, 60000);
 </script>
 </body>
 </html>

@@ -173,6 +173,7 @@ const REMINDERS_FILE = path.join(ROOT, 'reminders.json');
 const HISTORY_FILE = path.join(ROOT, 'chat_history.json');
 const PROFILE_FILE = path.join(ROOT, 'profile.json');
 const RUN_LOG = path.join(ROOT, 'run_log.txt');
+const ROUTINES_FILE = path.join(ROOT, 'routines.json');
 function loadReminders() {
   try { return JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf8')); } catch { return []; }
 }
@@ -275,6 +276,62 @@ async function detectLocation() {
   return await r.json();
 }
 
+function loadRoutines() {
+  try { return JSON.parse(fs.readFileSync(ROUTINES_FILE, 'utf8')); } catch { return {}; }
+}
+function saveRoutines(r) {
+  fs.writeFileSync(ROUTINES_FILE, JSON.stringify(r, null, 2));
+}
+const APP_ALIASES = {
+  notepad: 'notepad', calculator: 'calc', calc: 'calc', paint: 'mspaint',
+  chrome: 'chrome', edge: 'msedge', browser: 'msedge', explorer: 'explorer',
+  files: 'explorer', terminal: 'cmd', cmd: 'cmd', spotify: 'spotify',
+  discord: 'discord', steam: 'steam', vscode: 'code', code: 'code',
+  netflix: 'netflix', youtube: 'https://youtube.com', whatsapp: 'whatsapp:',
+  camera: 'microsoft.windows.camera:', settings: 'ms-settings:', taskmanager: 'taskmgr'
+};
+async function runRoutine(name) {
+  const routines = loadRoutines();
+  const key = (name || '').toLowerCase().trim();
+  const apps = routines[key];
+  if (!apps || !apps.length) throw new Error(`No routine named "${name}". Create one first.`);
+  for (const app of apps) {
+    const target = APP_ALIASES[app.toLowerCase()] || app;
+    await ps(`Start-Process '${String(target).replace(/'/g, "''")}'`).catch(() => {});
+    await new Promise(r2 => setTimeout(r2, 800));
+  }
+  return `Routine "${name}" executed: ${apps.join(', ')} launched.`;
+}
+
+async function organizeDownloads() {
+  const out = await ps(`
+    $dl = "$env:USERPROFILE\\Downloads"
+    $map = @{ Images = 'jpg','jpeg','png','gif','webp','svg','bmp'; Videos = 'mp4','mkv','avi','mov','webm';
+      Music = 'mp3','wav','ogg','flac','m4a'; Documents = 'pdf','docx','doc','txt','xlsx','pptx','csv';
+      Archives = 'zip','rar','7z','tar','gz'; Installers = 'exe','msi','apk' }
+    $moved = 0
+    foreach ($folder in $map.Keys) {
+      $dest = Join-Path $dl $folder
+      New-Item -ItemType Directory -Force -Path $dest | Out-Null
+      foreach ($ext in $map[$folder]) {
+        Get-ChildItem $dl -Filter "*.$ext" -File -ErrorAction SilentlyContinue | ForEach-Object {
+          Move-Item $_.FullName $dest -Force -ErrorAction SilentlyContinue; $script:moved++
+        }
+      }
+    }
+    Write-Output "$moved files organized"`);
+  return `Downloads organized — ${out}.`;
+}
+
+async function batteryStatus() {
+  const out = await ps(`
+    $b = Get-CimInstance Win32_Battery
+    if ($b) { Write-Output "$($b.EstimatedChargeRemaining)%|$(if($b.BatteryStatus -eq 2){'charging'}else{'discharging'})" }
+    else { Write-Output 'AC|plugged' }`);
+  const [percent, state] = out.split('|');
+  return { percent: parseInt(percent) || 100, state };
+}
+
 const serverLogic = async (req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   const q = new URL(req.url, 'http://x').searchParams;
@@ -345,6 +402,28 @@ const serverLogic = async (req, res) => {
         return json(res, 200, { profile: prof });
       }
 
+      if (p === '/api/routines') {
+        if (body.action === 'create') {
+          if (!body.name || !Array.isArray(body.apps)) return json(res, 400, { error: 'Need name + apps array' });
+          const routines = loadRoutines();
+          routines[body.name.toLowerCase().trim()] = body.apps.slice(0, 15);
+          saveRoutines(routines);
+          return json(res, 200, { reply: `Routine "${body.name}" saved.` });
+        }
+        if (body.action === 'run') return json(res, 200, { reply: await runRoutine(body.name) });
+        if (body.action === 'delete') {
+          const routines = loadRoutines();
+          delete routines[(body.name || '').toLowerCase().trim()];
+          saveRoutines(routines);
+          return json(res, 200, { reply: `Routine "${body.name}" deleted.` });
+        }
+        return json(res, 200, { routines: loadRoutines() });
+      }
+
+      if (p === '/api/organize') {
+        return json(res, 200, { reply: await organizeDownloads() });
+      }
+
       if (p === '/api/shutdown') {
         if (body.confirm !== 'yes-jarvis-shutdown') return json(res, 400, { error: 'Missing confirm token' });
         await ps('Stop-Computer -Force');
@@ -371,6 +450,10 @@ const serverLogic = async (req, res) => {
     if (req.method === 'DELETE' && p === '/api/profile') {
       saveProfile({ name: '', location: '', birthday: '', job: '', facts: [] });
       return json(res, 200, { reply: 'profile cleared' });
+    }
+
+    if (req.method === 'GET' && p === '/api/battery') {
+      return json(res, 200, await batteryStatus());
     }
 
     if (req.method === 'GET' && p === '/api/location') {
