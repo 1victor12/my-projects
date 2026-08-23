@@ -13,3 +13,7 @@ jarvis/reminders.json
 auto-push.ps1
 jarvis/chat_history.json
 jarvis/profile.json
+
+jarvis/profile.json
+jarvis/reminders.json
+jarvis/run_log.txt
