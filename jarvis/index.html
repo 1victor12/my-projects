@@ -289,6 +289,7 @@
     <button class="hud" id="micBtn">Mic: Off</button>
     <input type="text" id="typed" placeholder='Type a command — try "system status", "weather", "open calculator"...' autocomplete="off">
     <button class="hud" id="autoBtn">Auto: Off</button>
+<button class="hud" id="screenBtn">Screen</button>
 <button class="hud" id="sendBtn">Send</button>
     <button class="hud" id="installBtn">Install App</button>
   </div>
@@ -513,6 +514,33 @@ const SITES = {
   wikipedia: 'https://wikipedia.org', stackoverflow: 'https://stackoverflow.com'
 };
 let camStream = null;
+let screenStream = null;
+
+async function startScreenShare() {
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+    const v = document.getElementById('cam');
+    v.srcObject = screenStream;
+    v.style.display = 'block';
+    screenStream.getVideoTracks()[0].addEventListener('ended', () => { screenStream = null; document.getElementById('screenBtn').classList.remove('active'); v.style.display = 'none'; });
+    return true;
+  } catch { screenStream = null; return false; }
+}
+
+let audioCtx = null, keepAliveNode = null;
+function startKeepAlive() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (keepAliveNode) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0.0001;
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+    keepAliveNode = osc;
+  } catch {}
+  try { navigator.wakeLock && navigator.wakeLock.request('screen'); } catch {}
+}
 
 async function startCam() {
   try {
@@ -756,14 +784,32 @@ async function handle(raw) {
         reply = `I have no number for "${m[1].trim()}".${names.length ? ' I know: ' + names.join(', ') + '.' : ''} Save it by saying: save contact ${m[1].trim()} followed by the number.`;
       }
     }
+    else if (/what(?:'s| is)? on my screen|read my screen|look at my screen|see my screen|screen share/.test(t)) {
+      if (!screenStream) {
+        const ok = await startScreenShare();
+        if (!ok) { reply = 'You cancelled the screen share, sir. Tap the Screen button and choose what to share.'; }
+      }
+      if (screenStream) {
+        setStatus('READING YOUR SCREEN');
+        await new Promise(r => setTimeout(r, 500));
+        const img = grabFrame();
+        reply = await api('/api/vision', { image: img, prompt: 'This is a screenshot of the user\'s screen. Describe what app or content is shown, read any visible text, and answer helpfully.' });
+        setStatus(micOn ? 'LISTENING' : 'STANDBY');
+      }
+    }
     else if (/what do you see|look at (this|that)|describe (what|the room)|use your (eyes|camera)|who is there/.test(t)) {
-      if (!camStream) await startCam();
-      if (!camStream) {
-        reply = 'I have no camera, sir. Allow camera access and try again.';
+      let source = camStream ? 'cam' : null;
+      if (screenStream) source = 'screen';
+      if (!source) { if (await startCam()) source = 'cam'; }
+      if (!source) {
+        reply = 'I have no eyes open, sir. Allow camera access or tap the Screen button to show me your screen.';
       } else {
         setStatus('LOOKING');
         const img = grabFrame();
-        reply = await api('/api/vision', { image: img, prompt: 'Describe what you see in this image in 2-3 short sentences.' });
+        const q = source === 'screen'
+          ? 'This is the user\'s screen. Describe what is displayed and answer as their assistant.'
+          : 'Describe what you see in this image in 2-3 short sentences.';
+        reply = await api('/api/vision', { image: img, prompt: q });
         setStatus(micOn ? 'LISTENING' : 'STANDBY');
       }
     }
@@ -976,8 +1022,22 @@ function stopMic() {
 micBtn.addEventListener('click', () => {
   if (!SR) return addMsg('Speech recognition not supported here. Use Chrome or Edge.', 'err');
   if (micOn) return stopMic();
+  startKeepAlive();
   if (!recog) initRecog();
   try { recog.start(); } catch {}
+});
+document.getElementById('screenBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('screenBtn');
+  if (screenStream) {
+    screenStream.getTracks().forEach(tr => tr.stop());
+    screenStream = null;
+    btn.classList.remove('active');
+    addMsg('[screen sharing stopped]', 'err');
+    return;
+  }
+  const ok = await startScreenShare();
+  if (ok) { btn.classList.add('active'); addMsg('[sharing your screen — ask "what\'s on my screen"]', 'jarvis'); speak('I can see your screen now, sir.'); }
+  else addMsg('Screen share cancelled or unsupported.', 'err');
 });
 reactor.addEventListener('click', () => micBtn.click());
 document.getElementById('sendBtn').addEventListener('click', () => {
