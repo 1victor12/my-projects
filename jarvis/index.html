@@ -896,6 +896,41 @@ async function handle(raw) {
       if (bat && bat.state !== 'plugged') b += `Battery ${bat.percent} percent.`;
       reply = b.trim() || 'Systems nominal, sir.';
     }
+    else if ((m = t.match(/^(?:i )?(?:spent|paid)\s+([\d,.]+)\s*(?:shillings|tzs|tsh)?\s*(?:on|for)\s+(.+)$/i))) {
+      const amount = parseFloat(m[1].replace(/,/g, ''));
+      await fetch('/api/money', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount, category: m[2].trim(), note: text }) });
+      reply = `Recorded: ${amount.toLocaleString()} shillings for ${m[2].trim()}.`;
+    }
+    else if (/how much did i spend|spending report|my expenses/.test(t)) {
+      const period = /month/.test(t) ? 'month' : /day|today/.test(t) ? 'day' : 'week';
+      const d = await fetch('/api/money?period=' + period).then(r => r.json());
+      if (!d.count) reply = `No spending recorded this ${period}, sir.`;
+      else {
+        const cats = Object.entries(d.categories).map(([c, v]) => `${c}: ${v.toLocaleString()}`).join(', ');
+        reply = `This ${period} you spent ${d.total.toLocaleString()} shillings across ${d.count} entries. Breakdown — ${cats}.`;
+      }
+    }
+    else if (/prayer times?|when is (fajr|maghrib|isha|asr|dhuhr)|salah|salat/.test(t)) {
+      const d = await fetch('/api/prayer').then(r => r.json());
+      const T = d.timings;
+      reply = `Prayer times${d.city ? ' for ' + d.city : ''}: Fajr ${T.Fajr}, Dhuhr ${T.Dhuhr}, Asr ${T.Asr}, Maghrib ${T.Maghrib}, Isha ${T.Isha}. I will remind you, sir.`;
+      localStorage.setItem('jarvis.prayerTimes', JSON.stringify({ date: new Date().toDateString(), ...T }));
+    }
+    else if (/backup (?:my )?(?:memory|everything)|cloud backup/.test(t)) {
+      setStatus('BACKING UP');
+      const d = await api('/api/backup');
+      reply = d;
+      setStatus(micOn ? 'LISTENING' : 'STANDBY');
+    }
+    else if (/^(?:health|fitness) mode?\s*(on|off)?$/i.test(t)) {
+      const wantOn = !m[1] ? localStorage.getItem('jarvis.health') !== '1' : m[1].toLowerCase() === 'on';
+      localStorage.setItem('jarvis.health', wantOn ? '1' : '0');
+      reply = wantOn ? 'Health guardian engaged. Water every two hours, standing hourly, eye rest every twenty minutes.' : 'Health guardian standing down.';
+    }
+    else if ((m = t.match(/^compose email(?: to)?\s+(\S+@\S+)\s+saying\s+(.+)$/i)) || (m = t.match(/^email\s+(\S+@\S+)\s+(.+)$/i))) {
+      window.open(`mailto:${m[1]}?subject=${encodeURIComponent('From JARVIS')}&body=${encodeURIComponent(m[2])}`, '_blank');
+      reply = `Draft ready to ${m[1]} in your mail app, sir. Review and send.`;
+    }
     else if (/what do you know about me|tell me about myself|who am i\b/.test(t)) {
       const d = await fetch('/api/profile').then(r => r.json());
       const p = d.profile;
@@ -1264,6 +1299,56 @@ setInterval(async () => {
     for (const due of (d.due || [])) { addMsg('[REMINDER] ' + due, 'err'); speak('Reminder, sir: ' + due.replace(/^Reminder:\s*/, '')); }
   } catch {}
 }, 30000);
+
+// ---------- PRAYER WATCHER ----------
+let announcedPrayers = JSON.parse(localStorage.getItem('jarvis.announced') || '{}');
+async function prayerWatch() {
+  try {
+    const today = new Date().toDateString();
+    let pt = JSON.parse(localStorage.getItem('jarvis.prayerTimes') || 'null');
+    if (!pt || pt.date !== today) {
+      pt = await fetch('/api/prayer').then(r => r.json());
+      localStorage.setItem('jarvis.prayerTimes', JSON.stringify({ date: today, ...pt.timings }));
+    }
+    const now = new Date();
+    const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    for (const [name, time] of Object.entries(pt.timings || pt)) {
+      if (time === hhmm && announcedPrayers[name] !== today) {
+        announcedPrayers[name] = today;
+        localStorage.setItem('jarvis.announced', JSON.stringify(announcedPrayers));
+        addMsg(`[${name} prayer time]`, 'err');
+        speak(`It is time for ${name} prayer, Boss.`);
+      }
+    }
+  } catch {}
+}
+setInterval(prayerWatch, 45000);
+setTimeout(prayerWatch, 8000);
+
+// ---------- HEALTH GUARDIAN ----------
+const healthOn = () => localStorage.getItem('jarvis.health') === '1';
+function healthNag(label, minutes) {
+  setInterval(() => {
+    if (healthOn()) { addMsg(`[${label}]`, 'err'); speak(label); }
+  }, minutes * 60000);
+}
+healthNag('Time to drink water, Boss. Stay hydrated.', 120);
+healthNag('Stand up and stretch, Boss.', 60);
+healthNag('Eye rest, Boss. Look at something far for twenty seconds.', 20);
+
+// ---------- AUTO-UPDATE DETECTOR ----------
+let myVersion = 0;
+fetch('/api/version').then(r => r.json()).then(d => { myVersion = d.v; }).catch(() => {});
+setInterval(async () => {
+  try {
+    const d = await fetch('/api/version?t=' + Date.now()).then(r => r.json());
+    if (myVersion && d.v && d.v !== myVersion) {
+      addMsg('[JARVIS updated on PC — refreshing to newest version]', 'err');
+      speak('Update detected, sir. Refreshing.');
+      setTimeout(() => location.reload(true), 3000);
+    }
+  } catch {}
+}, 300000);
 
 let lastSent = 0;
 function sendPosition(pos) {

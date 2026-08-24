@@ -442,6 +442,13 @@ const ROUTINES_FILE = path.join(ROOT, 'routines.json');
 const CONTACTS_FILE = path.join(ROOT, 'contacts.json');
 const DEVICES_FILE = path.join(ROOT, 'smart_devices.json');
 const TRACK_FILE = path.join(ROOT, 'location_track.json');
+const MONEY_FILE = path.join(ROOT, 'money.json');
+function loadMoney() {
+  try { return JSON.parse(fs.readFileSync(MONEY_FILE, 'utf8')); } catch { return []; }
+}
+function saveMoney(m) {
+  fs.writeFileSync(MONEY_FILE, JSON.stringify(m.slice(-2000), null, 1));
+}
 const SECRET_FILE = path.join(ROOT, 'secret_key.txt');
 function secretKey() {
   try { return fs.readFileSync(SECRET_FILE, 'utf8').trim(); } catch { return ''; }
@@ -842,6 +849,17 @@ async function detectLocation() {
   return await r.json();
 }
 
+async function prayerTimes() {
+  const t = loadTrack();
+  const p = loadProfile();
+  let lat = -6.1659, lon = 39.2026;
+  if (t.current) { lat = t.current.lat; lon = t.current.lon; }
+  const r = await fetch(`https://api.aladhan.com/v1/timings?latitude=${lat}&longitude=${lon}&method=3`, { signal: AbortSignal.timeout(10000) });
+  const d = await r.json();
+  const T = d.data.timings;
+  return { city: p.location || (t.current && t.current.address) || '', timings: { Fajr: T.Fajr, Dhuhr: T.Dhuhr, Asr: T.Asr, Maghrib: T.Maghrib, Isha: T.Isha } };
+}
+
 async function webSearch(q) {
   const r = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -1176,6 +1194,41 @@ const serverLogic = async (req, res) => {
       if (p === '/api/agent') {
         const out = await runAgent(body.messages || [{ role: 'user', content: body.text || '' }]);
         return json(res, 200, out);
+      }
+
+      if (p === '/api/money') {
+        if (req.method === 'POST') {
+          if (isNaN(parseFloat(body.amount))) return json(res, 400, { error: 'Need amount' });
+          const list = loadMoney();
+          list.push({ amount: parseFloat(body.amount), category: (body.category || 'other').toLowerCase().slice(0, 30), note: (body.note || '').slice(0, 100), time: Date.now() });
+          saveMoney(list);
+          return json(res, 200, { reply: 'saved' });
+        }
+        const list = loadMoney();
+        const days = { day: 1, week: 7, month: 30, year: 365 }[q.get('period') || 'week'] || 7;
+        const recent = list.filter(e => e.time >= Date.now() - days * 864e5);
+        const total = recent.reduce((s, e) => s + e.amount, 0);
+        const categories = {};
+        recent.forEach(e => { categories[e.category] = (categories[e.category] || 0) + e.amount; });
+        return json(res, 200, { total, categories, count: recent.length });
+      }
+
+      if (p === '/api/prayer') {
+        return json(res, 200, await prayerTimes());
+      }
+
+      if (p === '/api/version') {
+        let v = 0;
+        try { v = fs.statSync(path.join(ROOT, 'index.html')).mtimeMs; } catch {}
+        return json(res, 200, { v });
+      }
+
+      if (p === '/api/backup' && req.method === 'POST') {
+        const out = await new Promise((resolve) => {
+          execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'backup.ps1')],
+            { timeout: 60000 }, (err, stdout, stderr) => resolve((stdout || stderr || err?.message || '').trim()));
+        });
+        return json(res, 200, { reply: out.slice(0, 800) || 'backup done' });
       }
 
       if (p === '/api/shutdown') {
