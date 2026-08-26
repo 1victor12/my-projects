@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#03080d">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/icon-192.png">
@@ -19,12 +22,13 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
   body {
-    font-family: 'Consolas', 'Courier New', monospace;
+    font-family: 'Rajdhani', 'Consolas', 'Courier New', monospace;
     background:
       radial-gradient(ellipse at 50% 60%, rgba(0,229,255,.06) 0%, transparent 55%),
       var(--bg);
     color: var(--cyan);
     display: flex; flex-direction: column;
+    --lvl: 0;
   }
   body::before {
     content: ''; position: fixed; inset: 0; pointer-events: none;
@@ -44,13 +48,14 @@
     text-align: center; padding: 18px 0 6px; z-index: 2;
   }
   header h1 {
-    font-size: clamp(18px, 3vw, 28px); letter-spacing: 12px; font-weight: 400;
+    font-family: 'Orbitron', 'Consolas', monospace;
+    font-size: clamp(18px, 3vw, 28px); letter-spacing: 12px; font-weight: 500;
     color: var(--cyan); text-shadow: 0 0 18px rgba(0,229,255,.8);
   }
   header .sub { font-size: 11px; color: rgba(0,229,255,.45); letter-spacing: 4px; margin-top: 4px; }
 
   .core-zone { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; min-height: 220px; }
-  .reactor { position: relative; width: 240px; height: 240px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+  .reactor { position: relative; width: 240px; height: 240px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; transform: scale(calc(1 + var(--lvl, 0) * 0.09)); transition: transform .07s linear; }
   .ring { position: absolute; border-radius: 50%; border-style: solid; transition: box-shadow .3s, transform .3s; }
   .r1 { inset: 0; border-width: 1px; border-color: rgba(0,229,255,.35); animation: spin 24s linear infinite; }
   .r2 { inset: 16px; border-width: 2px; border-color: rgba(0,229,255,.25); border-bottom-color: var(--cyan); animation: spin 9s linear infinite reverse; }
@@ -85,16 +90,34 @@
   .log {
     flex: 1.1; max-width: 760px; width: calc(100% - 48px); margin: 0 auto;
     overflow-y: auto; padding: 10px 18px; z-index: 2;
+    display: flex; flex-direction: column;
     scrollbar-width: thin; scrollbar-color: var(--dim) transparent;
   }
   .log::-webkit-scrollbar { width: 5px } .log::-webkit-scrollbar-thumb { background: var(--dim) }
-  .msg { margin: 10px 0; font-size: 14px; line-height: 1.5; opacity: 0; animation: fadein .3s forwards; }
-  @keyframes fadein { to { opacity: 1 } }
-  .msg.you { color: rgba(255,255,255,.85); }
-  .msg.you::before { content: '> '; color: var(--gold); }
-  .msg.jarvis { color: var(--cyan); text-shadow: 0 0 10px rgba(0,229,255,.35); }
-  .msg.jarvis::before { content: 'JARVIS: '; color: var(--gold); letter-spacing: 2px; }
-  .msg.err { color: var(--red); }
+  .msg {
+    max-width: 80%; margin: 8px 0; font-size: 15px; line-height: 1.5;
+    padding: 10px 16px; border-radius: 16px; white-space: pre-wrap;
+    opacity: 0; animation: fadein .3s forwards;
+  }
+  .msg.you {
+    align-self: flex-end; color: rgba(255,255,255,.92);
+    background: linear-gradient(135deg, rgba(255,179,0,.14), rgba(255,179,0,.05));
+    border: 1px solid rgba(255,179,0,.4); border-bottom-right-radius: 4px;
+    box-shadow: 0 0 12px rgba(255,179,0,.12);
+  }
+  .msg.jarvis {
+    align-self: flex-start; color: var(--cyan);
+    background: linear-gradient(135deg, rgba(0,229,255,.12), rgba(0,229,255,.03));
+    border: 1px solid rgba(0,229,255,.35); border-bottom-left-radius: 4px;
+    text-shadow: 0 0 10px rgba(0,229,255,.3);
+    box-shadow: 0 0 14px rgba(0,229,255,.12);
+  }
+  .msg.jarvis::after { content: ' ◈ JARVIS'; display: block; font-size: 9px; letter-spacing: 3px; color: var(--gold); margin-top: 6px; opacity: .7; }
+  .msg.err {
+    align-self: center; max-width: 90%; text-align: center;
+    color: rgba(255,120,120,.9); font-size: 11px; letter-spacing: 1px;
+    background: none; border: none; padding: 2px;
+  }
 
   .controls { padding: 14px 24px 22px; z-index: 2; }
   .bar { display: flex; gap: 10px; max-width: 760px; margin: 0 auto; }
@@ -139,6 +162,18 @@
   /* extra reactor detail rings */
   .r5 { inset: 20px; border-width: 1px; border-color: transparent; border-left-color: rgba(0,229,255,.6); border-right-color: rgba(0,229,255,.6); animation: spin 12s linear infinite; }
   .ticks { position: absolute; inset: -14px; animation: spin 40s linear infinite reverse; opacity: .5; }
+
+  /* ---------- Floating install button (phone only) ---------- */
+  #installFloat {
+    display: none; position: fixed; bottom: 104px; left: 50%;
+    transform: translateX(-50%); z-index: 6;
+    padding: 13px 34px; font-size: 13px; letter-spacing: 3px;
+    background: linear-gradient(90deg, rgba(0,229,255,.9), rgba(125,249,255,.9));
+    color: #03080d; border: none; font-weight: 600;
+    box-shadow: 0 0 26px rgba(0,229,255,.55), 0 4px 18px rgba(0,0,0,.5);
+    animation: breathe 2.2s ease-in-out infinite;
+  }
+  @media (max-width: 900px) { body:not(.appmode) #installFloat { display: block; } }
 
   /* boot sequence */
   #boot {
@@ -193,21 +228,7 @@
   }
   .thinking .core { box-shadow: 0 0 60px rgba(0,229,255,1), 0 0 140px rgba(0,229,255,.6), inset 0 0 30px white; }
 
-  /* ---------- Owner biometric lock ---------- */
-  #ownerLock {
-    position: fixed; inset: 0; background: var(--bg); z-index: 98;
-    display: none; align-items: center; justify-content: center; flex-direction: column;
-    text-align: center;
-  }
-  #ownerLock.show { display: flex; }
-  #ownerLock h2 {
-    font-weight: 400; letter-spacing: 6px; color: var(--cyan);
-    font-size: clamp(16px, 3vw, 22px); text-shadow: 0 0 18px rgba(0,229,255,.8);
-    margin-bottom: 8px;
-  }
-  #ownerLock p { font-size: 11px; letter-spacing: 2px; color: rgba(0,229,255,.55); margin-bottom: 24px; }
-  #lockStatus { margin-top: 16px; font-size: 10px; letter-spacing: 2px; color: var(--red); min-height: 14px; }
-  #ownerLock button.hud { padding: 12px 26px; font-size: 13px; }
+  /* Owner biometric lock — REMOVED */
 
 
 </style>
@@ -216,14 +237,6 @@
 <div class="frame tl"></div><div class="frame tr"></div><div class="frame bl"></div><div class="frame br"></div>
 
 <div id="boot"><div id="bootLog"></div></div>
-
-<div id="ownerLock">
-  <h2>OWNER LOCK ENGAGED</h2>
-  <p>ONLY BIG VEE CAN OPEN THIS SYSTEM</p>
-  <button class="hud" id="btnRegister" style="display:none">Register Owner</button>
-  <button class="hud" id="btnUnlock">Unlock with Phone Lock</button>
-  <div id="lockStatus"></div>
-</div>
 
 <div class="topstrip">
   <span class="chip"><span class="pulse"></span>NEURAL INTERFACE <b>ONLINE</b></span>
@@ -295,6 +308,8 @@
   </div>
   <div class="hint">wake mode: say "jarvis" before a command · voice requires chrome or edge · same-wifi phone access works too</div>
 </div>
+
+<button class="hud" id="installFloat">INSTALL JARVIS APP</button>
 
 <script>
 const logEl = document.getElementById('log');
@@ -399,7 +414,7 @@ async function healthCheck() {
     const d = await fetch('/api/health').then(r => r.json());
     if (serverTrouble) {
       serverTrouble = false;
-      const msg = d.ollama === 'ok'
+      const msg = (d.brain === 'ok' || d.ollama === 'ok')
         ? 'All systems restored, sir. Server and brain are online.'
         : 'Server restored, sir. The AI brain is still waking up.';
       addMsg('[JARVIS] ' + msg, 'jarvis');
@@ -414,7 +429,7 @@ setInterval(healthCheck, 10000);
 const bootLines = [
   'J.A.R.V.I.S. KERNEL v9.4 LOADING...',
   'CALIBRATING ARC REACTOR ............ OK',
-  'MOUNTING NEURAL CORE (llama3.2) .... OK',
+  'MOUNTING NEURAL CORE (hermes3) ...... OK',
   'SPEECH SYNTHESIS ENGINE ............ OK',
   'VOICE RECOGNITION ARRAY ............ OK',
   'SYSTEM DIAGNOSTICS MODULE .......... OK',
@@ -454,23 +469,31 @@ setInterval(() => {
   document.getElementById('clock').textContent = new Date().toLocaleTimeString();
 }, 1000);
 
-(async () => {
+async function updateBrain() {
   try {
     const h = await fetch('/api/health').then(r => r.json());
-    const on = h.ollama === 'ok';
+    const on = h.brain === 'ok' || h.ollama === 'ok';
     document.getElementById('brainDot').classList.toggle('on', on);
-    document.getElementById('brainTxt').textContent = on ? 'ONLINE' : 'OFFLINE';
-    document.getElementById('modelTxt').textContent = h.model || '--';
+    const bt = document.getElementById('brainTxt');
+    if (on) {
+      bt.textContent = 'ONLINE';
+      bt.style.color = '';
+    } else {
+      bt.textContent = 'OFFLINE';
+      bt.style.color = 'var(--red)';
+    }
+    document.getElementById('modelTxt').textContent =
+      h.backend === 'gemini' ? 'Gemini Flash (cloud)' :
+      h.ollama === 'ok' ? (h.model || 'llama3.2') + ' (local)' : '--';
     if (h.uptime != null) {
       const m = Math.floor(h.uptime / 60);
       document.getElementById('upTxt').textContent = m > 0 ? `${m}m` : `${h.uptime}s`;
-      setInterval(() => {
-        const v = document.getElementById('upTxt');
-        if (v.textContent.includes('m')) return;
-      }, 30000);
     }
-  } catch {}
-})();
+    return on;
+  } catch { return false; }
+}
+updateBrain();
+setInterval(updateBrain, 15000);
 
 // ---------- Neural sphere particles ----------
 const orb = document.getElementById('orb');
@@ -1150,6 +1173,8 @@ setInterval(async () => {
 
 let deferredInstall = null;
 const installBtn = document.getElementById('installBtn');
+const floatInstall = document.getElementById('installFloat');
+floatInstall.addEventListener('click', () => installBtn.click());
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   deferredInstall = e;
@@ -1159,6 +1184,7 @@ installBtn.addEventListener('click', async () => {
     deferredInstall.prompt();
     await deferredInstall.userChoice;
     deferredInstall = null;
+    document.body.classList.add('appmode');
     return;
   }
   const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
@@ -1169,77 +1195,11 @@ installBtn.addEventListener('click', async () => {
 });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
-// ---------- Owner biometric lock (uses phone/PC screen lock via WebAuthn) ----------
-const CRED_KEY = 'jarvis_owner_credential';
-const b64ToBuf = b => Uint8Array.from(atob(b.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-const bufToB64 = buf => { const bytes = new Uint8Array(buf); let s = ''; for (const c of bytes) s += String.fromCharCode(c); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
-const lockEl = document.getElementById('ownerLock');
-const lockStatus = document.getElementById('lockStatus');
-const btnUnlock = document.getElementById('btnUnlock');
-const btnRegister = document.getElementById('btnRegister');
-
-async function platformAuthReady() {
-  try {
-    return window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-  } catch { return false; }
-}
-async function registerOwner() {
-  const cred = await navigator.credentials.create({ publicKey: {
-    challenge: crypto.getRandomValues(new Uint8Array(32)),
-    rp: { name: 'J.A.R.V.I.S.' },
-    user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'bigvee', displayName: 'Big Vee' },
-    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-    authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
-    timeout: 60000
-  }});
-  localStorage.setItem(CRED_KEY, bufToB64(cred.rawId));
-}
-async function verifyOwner() {
-  await navigator.credentials.get({ publicKey: {
-    challenge: crypto.getRandomValues(new Uint8Array(32)),
-    allowCredentials: [{ type: 'public-key', id: b64ToBuf(localStorage.getItem(CRED_KEY)) }],
-    userVerification: 'required',
-    timeout: 60000
-  }});
-}
-async function unlockFlow() {
-  lockStatus.textContent = '';
-  try {
-    await verifyOwner();
-    lockEl.classList.remove('show');
-    addMsg('Owner verified. Welcome back, sir.', 'jarvis');
-    speak('Welcome back, sir.');
-  } catch (e) {
-    lockStatus.textContent = e.name === 'NotAllowedError'
-      ? 'AUTHENTICATION CANCELLED OR FAILED - ACCESS DENIED'
-      : 'VERIFICATION ERROR: ' + (e.message || e.name);
-  }
-}
-async function initOwnerLock() {
-  if (!await platformAuthReady()) return;   // no biometric hardware -> run unlocked
-  if (sessionStorage.getItem('jarvis_unlocked')) return;
-  const hasCred = !!localStorage.getItem(CRED_KEY);
-  btnRegister.style.display = hasCred ? 'none' : 'inline-block';
-  btnUnlock.textContent = hasCred ? 'Unlock with Phone Lock' : 'Set Up Phone Lock Now';
-  setTimeout(() => lockEl.classList.add('show'), 1800); // after boot finishes
-}
-btnRegister.addEventListener('click', async () => {
-  lockStatus.textContent = '';
-  try {
-    await registerOwner();
-    await unlockFlow();
-  } catch (e) { lockStatus.textContent = 'REGISTRATION FAILED: ' + (e.message || e.name); }
-});
-btnUnlock.addEventListener('click', async () => {
-  if (!localStorage.getItem(CRED_KEY)) {
-    // first-time setup: registering also verifies the owner's screen lock
-    btnRegister.click(); return;
-  }
-  await unlockFlow();
-});
-initOwnerLock();
+// Owner biometric lock — FULLY REMOVED (no WebAuthn, no phone-lock check)
+async function initOwnerLock(){ return; }
 if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
   installBtn.textContent = 'App Mode ✓';
+  document.body.classList.add('appmode');
 }
 
 addMsg('JARVIS initialized. Click the reactor (or press Space) and speak after the beep-tone of your own courage. Try: "what time is it", "open calculator", "weather", "system status".', 'jarvis');

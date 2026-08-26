@@ -81,18 +81,6 @@ async function manageTask(action, text) {
   throw new Error('Unknown task action');
 }
 
-// ---------- Owner-only lockdown ----------
-const CODE_FILE = path.join(ROOT, 'owner_code.txt');
-function ownerCode() {
-  try { return fs.readFileSync(CODE_FILE, 'utf8').trim(); } catch { return 'bigvee2026'; }
-}
-function denyIfNotOwner(code) {
-  if ((code || '').trim() !== ownerCode()) {
-    return 'Access denied. This system can only be shut down by my owner, Big Vee.';
-  }
-  return null;
-}
-
 async function openApp(name) {
   const apps = {
     notepad: 'notepad', calculator: 'calc', calc: 'calc', paint: 'mspaint',
@@ -293,7 +281,7 @@ async function reverseGeocode(lat, lon) {
 }
 
 // ---------- Phone file access ----------
-const PHONE_DIRS = { downloads: '/sdcard/Download', download: '/sdcard/Download', dcim: '/sdcard/DCIM', pictures: '/sdcard/Pictures', movies: '/sdcard/Movies', music: '/sdcard/Music', documents: '/sdcard/Documents', whatsapp: '/sdcard/WhatsApp', root: '/sdcard' };
+const PHONE_DIRS = { downloads: '/sdcard/Download', download: '/sdcard/Download', dcim: '/sdcard/DCIM', camera: '/sdcard/DCIM', pictures: '/sdcard/Pictures', movies: '/sdcard/Movies', music: '/sdcard/Music', documents: '/sdcard/Documents', whatsapp: '/sdcard/WhatsApp', whatsapp_media: '/sdcard/Android/media/com.whatsapp', wa_media: '/sdcard/Android/media/com.whatsapp', telegram: '/sdcard/Telegram', android: '/sdcard/Android', media: '/sdcard/Android/media', root: '/sdcard' };
 
 async function phoneList(dir) {
   await phoneSerial();
@@ -435,6 +423,225 @@ async function ytUpload(title, description) {
   return { message: `Uploaded "${path.basename(latest)}" to YouTube as "${title || path.basename(latest)}", sir.` };
 }
 
+// ---------- Gmail (real email access) ----------
+const GMAIL_TOKEN = path.join(ROOT, 'gmail_token.json');
+const GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'];
+const NOT_LINKED = 'Gmail is not linked yet, sir. Open https://localhost:8124/api/gmail/auth in your browser once and approve access.';
+
+function gmailOAuth() {
+  if (!google || !fs.existsSync(YT_SECRET)) return null;
+  const raw = JSON.parse(fs.readFileSync(YT_SECRET, 'utf8'));
+  const c = raw.installed || raw.web;
+  return new google.auth.OAuth2(c.client_id, c.client_secret, 'http://localhost:8124/oauth2callback');
+}
+
+async function gmailClient() {
+  const oauth2 = gmailOAuth();
+  if (!fs.existsSync(GMAIL_TOKEN)) throw new Error(NOT_LINKED);
+  oauth2.setCredentials(JSON.parse(fs.readFileSync(GMAIL_TOKEN, 'utf8')));
+  return google.gmail({ version: 'v1', auth: oauth2 });
+}
+
+async function gmailRead(query, max = 5) {
+  const gmail = await gmailClient();
+  const list = await gmail.users.messages.list({ userId: 'me', q: query || 'in:inbox', maxResults: Math.min(max || 5, 10) });
+  const ids = (list.data.messages || []).slice(0, max || 5);
+  if (!ids.length) return query ? `No emails matching "${query}", sir.` : 'Your inbox is empty, sir.';
+  const lines = [];
+  for (const m of ids) {
+    try {
+      const full = await gmail.users.messages.get({ userId: 'me', id: m.id, format: 'metadata', metadataHeaders: ['From', 'Subject', 'Date'] });
+      const h = {};
+      ((full.data.payload || {}).headers || []).forEach(x => { h[x.name] = x.value; });
+      lines.push(`- ${h.From || '?'} | "${h.Subject || '(no subject)'}" (${h.Date || ''})\n  ${String(full.data.snippet || '').slice(0, 150)}`);
+    } catch {}
+  }
+  return `Latest emails${query ? ` matching "${query}"` : ''}, sir:\n` + lines.join('\n');
+}
+
+async function gmailSend(to, subject, body) {
+  let addr = String(to || '').trim();
+  if (!/@/.test(addr)) {
+    const prof = loadProfile();
+    if (prof.email && /^me\b|my$/i.test(addr)) addr = prof.email;
+    else throw new Error(`"${addr}" is not an email address, sir.`);
+  }
+  const gmail = await gmailClient();
+  const raw = Buffer.from(
+    `To: ${addr}\r\nSubject: ${subject || '(no subject)'}\r\nContent-Type: text/plain; charset="UTF-8"\r\n\r\n${body || ''}`
+  ).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+  return `Email sent to ${addr}, sir.`;
+}
+
+// ---------- WhatsApp (chat + prefilled messages) ----------
+async function waNumber(who) {
+  const s = String(who || '').trim();
+  if (/^\+?\d{7,15}$/.test(s)) return s.replace(/\+/g, '');
+  const hit = loadContacts()[s.toLowerCase()];
+  if (hit && /^\+?\d{7,15}$/.test(String(hit))) return String(hit).replace(/\+/g, '');
+  throw new Error(`I don't have a WhatsApp number for "${s}", sir. Save it in contacts first.`);
+}
+
+async function whatsappSend(who, text) {
+  const num = await waNumber(who);
+  const url = `https://wa.me/${num}${text ? `?text=${encodeURIComponent(text)}` : ''}`;
+  await ps(`Start-Process '${url}'`);
+  return text
+    ? `WhatsApp chat with ${who} is open with your message typed, sir. One Enter there sends it.`
+    : `Opening WhatsApp chat with ${who}, sir.`;
+}
+
+async function whatsappOpen(who) {
+  return whatsappSend(who, '');
+}
+
+// ---------- Full local file access ----------
+const PROTECTED = /^[a-z]:\\(?:Windows(?:\\|$)|Program Files(?: \(x86\))?(?:\\|$))(?:|$)/i;
+function safePath(p) {
+  let full = String(p || '').trim().replace(/^~(?=$|[\\/])/, process.env.USERPROFILE || '');
+  if (/^[a-z]:$/i.test(full)) full += '\\';
+  return path.resolve(full);
+}
+
+async function fsList(dir) {
+  const d = safePath(dir || process.env.USERPROFILE);
+  const items = await fs.promises.readdir(d, { withFileTypes: true });
+  if (!items.length) return `${d} is empty, sir.`;
+  return `Contents of ${d}:\n` + items.slice(0, 100)
+    .map(i => i.isDirectory() ? `[DIR] ${i.name}` : i.name).join('\n');
+}
+
+async function fsRead(file, limit = 4000) {
+  const f = safePath(file);
+  const stat = await fs.promises.stat(f);
+  if (stat.size > 2 * 1024 * 1024) throw new Error(`"${f}" is over 2MB, sir. Too big to read aloud.`);
+  const text = (await fs.promises.readFile(f)).toString('utf8');
+  if (/\x00/.test(text.slice(0, 800))) return `"${f}" is a binary file (~${Math.round(stat.size / 1024)} KB), sir.`;
+  return `Contents of ${f}:${text.length > limit ? ' (first part)' : ''}\n` + text.slice(0, limit);
+}
+
+async function fsWrite(file, content) {
+  const f = safePath(file);
+  if (PROTECTED.test(f)) throw new Error('That folder is protected, sir.');
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  await fs.promises.writeFile(f, String(content ?? ''), 'utf8');
+  return `Saved ${f}, sir.`;
+}
+
+async function fsDelete(target) {
+  const t = safePath(target);
+  if (PROTECTED.test(t) || /^[a-z]:\\?$/i.test(t)) throw new Error('That path is protected, sir.');
+  await fs.promises.rm(t, { recursive: true, force: false });
+  return `Deleted ${t}, sir.`;
+}
+
+async function fsMove(src, dst) {
+  const s = safePath(src), d = safePath(dst);
+  if (PROTECTED.test(s) || PROTECTED.test(d)) throw new Error('Protected path, sir.');
+  fs.mkdirSync(path.dirname(d), { recursive: true });
+  try { await fs.promises.rename(s, d); }
+  catch (e) {
+    if (e.code !== 'EXDEV') throw e;
+    await fs.promises.cp(s, d, { recursive: true });
+    await fs.promises.rm(s, { recursive: true });
+  }
+  return `Moved to ${d}, sir.`;
+}
+
+async function fsCopy(src, dst) {
+  const s = safePath(src), d = safePath(dst);
+  if (PROTECTED.test(d) && PROTECTED.test(s)) throw new Error('Protected path, sir.');
+  fs.mkdirSync(path.dirname(d), { recursive: true });
+  const st = await fs.promises.stat(s);
+  if (st.isDirectory()) await fs.promises.cp(s, d, { recursive: true });
+  else await fs.promises.copyFile(s, d);
+  return `Copied to ${d}, sir.`;
+}
+
+async function fsFindEverywhere(name, rootDir) {
+  const needle = String(name || '').toLowerCase();
+  if (!needle) throw new Error('Tell me what to search for, sir.');
+  const r = String(rootDir || '').trim();
+  let roots;
+  if (/^(all|everywhere|whole pc|entire pc)$/i.test(r)) {
+    const out = await ps('(Get-PSDrive -PSProvider FileSystem | Where-Object {$_.Free -ne $null}).Root');
+    roots = out.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!roots.length) roots = ['C:\\'];
+  } else {
+    roots = [safePath(rootDir || process.env.USERPROFILE)];
+  }
+  const hits = [];
+  async function walk(dir, depth) {
+    if (depth > 7 || hits.length >= 25) return;
+    let entries;
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (hits.length >= 25) return;
+      const full = path.join(dir, e.name);
+      if (e.name.toLowerCase().includes(needle)) hits.push(full);
+      if (e.isDirectory() && !['node_modules', '.git', '$Recycle.Bin', 'System Volume Information'].includes(e.name)) await walk(full, depth + 1);
+    }
+  }
+  for (const root of roots) await walk(root, 0);
+  const scope = roots.length === 1 ? roots[0] : `all ${roots.length} drives (${roots.map(x => x.charAt(0)).join(', ')})`;
+  return hits.length ? `Found ${hits.length} match${hits.length > 1 ? 'es' : ''}, sir — searched ${scope}:\n` + hits.join('\n')
+    : `Nothing matching "${name}" anywhere, sir.`;
+}
+
+async function listDrives() {
+  const out = await ps(`Get-PSDrive -PSProvider FileSystem | ForEach-Object { Write-Output "$($_.Name):  $([math]::Round($_.Used/1GB)) GB used, $([math]::Round($_.Free/1GB)) GB free" }`);
+  return `Drives on this PC, sir:\n${out}`;
+}
+
+// ---------- Voice, typing, notes, memory, music ----------
+async function speak(text) {
+  const clean = String(text || '').replace(/['"\\`]/g, '').replace(/\r?\n/g, ' ').trim().slice(0, 600);
+  if (!clean) throw new Error('Nothing to say, sir.');
+  await ps(`Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('${clean}')`);
+  return `Spoken out loud: "${clean}"`;
+}
+
+async function typeText(text) {
+  const t = String(text || '').replace(/[{}[\]()~%^+]/g, '').replace(/\r?\n/g, ' ').trim().slice(0, 500);
+  if (!t) throw new Error('Nothing to type, sir.');
+  await ps(`$o=New-Object -ComObject WScript.Shell; $o.SendKeys('${t}'); 'ok'`);
+  return `Typed "${t}" into the active window, sir.`;
+}
+
+const NOTES_FILE = path.join(ROOT, 'notes.json');
+function loadNotes() {
+  try { return JSON.parse(fs.readFileSync(NOTES_FILE, 'utf8')); } catch { return []; }
+}
+async function addNote(text) {
+  const t = String(text || '').trim().slice(0, 1000);
+  if (!t) throw new Error('Tell me what to note down, sir.');
+  const list = loadNotes();
+  list.push({ id: Date.now(), text: t, time: new Date().toISOString() });
+  fs.writeFileSync(NOTES_FILE, JSON.stringify(list.slice(-500), null, 1));
+  return `Noted, sir: "${t}"`;
+}
+async function listNotes(n = 10) {
+  const list = loadNotes().slice(-(n || 10)).reverse();
+  if (!list.length) return 'Your notebook is empty, sir.';
+  return 'Your recent notes, sir:\n' + list.map(x => `- ${x.text} (${x.time.slice(0, 16).replace('T', ' ')})`).join('\n');
+}
+
+async function rememberFact(fact) {
+  const f = String(fact || '').trim().slice(0, 300);
+  if (!f) throw new Error('Tell me what to remember, sir.');
+  const prof = loadProfile();
+  prof.facts.push(f);
+  saveProfile(prof);
+  return `Remembered permanently, sir: ${f}`;
+}
+
+async function playMusic(query) {
+  const q = String(query || '').trim() || 'relaxing music';
+  await ps(`Start-Process 'https://www.youtube.com/results?search_query=${encodeURIComponent(q)}'`);
+  return `Searching YouTube for "${q}", sir.`;
+}
+
 const HISTORY_FILE = path.join(ROOT, 'chat_history.json');
 const PROFILE_FILE = path.join(ROOT, 'profile.json');
 const RUN_LOG = path.join(ROOT, 'run_log.txt');
@@ -457,7 +664,7 @@ function isLocal(req) {
   const ip = req.socket.remoteAddress || '';
   return ip.includes('127.0.0.1') || ip === '::1' || ip === '::ffff:127.0.0.1';
 }
-const DANGEROUS = ['/api/run', '/api/shutdown', '/api/restart', '/api/lock', '/api/kill', '/api/device'];
+const DANGEROUS = ['/api/run', '/api/shutdown', '/api/restart', '/api/lock', '/api/kill', '/api/device', '/api/fs', '/api/gmail/send', '/api/whatsapp', '/api/speak'];
 function loadContacts() {
   try { return JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8')); } catch { return {}; }
 }
@@ -505,8 +712,8 @@ function saveHistory(list) {
 function loadProfile() {
   try {
     const p = JSON.parse(fs.readFileSync(PROFILE_FILE, 'utf8'));
-    return { name: '', location: '', birthday: '', job: '', facts: [], ...p };
-  } catch { return { name: '', location: '', birthday: '', job: '', facts: [] }; }
+    return { name: '', location: '', birthday: '', job: '', email: '', facts: [], ...p };
+  } catch { return { name: '', location: '', birthday: '', job: '', email: '', facts: [] }; }
 }
 function saveProfile(p) {
   fs.writeFileSync(PROFILE_FILE, JSON.stringify(p, null, 2));
@@ -522,6 +729,7 @@ function systemPrompt() {
   if (p.location) s += ` Your owner lives in ${p.location}.`;
   if (p.birthday) s += ` His birthday is ${p.birthday}.`;
   if (p.job) s += ` He works as ${p.job}.`;
+  if (p.email) s += ` His email address is ${p.email}.`;
   if (p.facts && p.facts.length) s += ' Things you know about your owner: ' + p.facts.slice(-40).join(' | ') + '.';
   s += ` Current time: ${new Date().toLocaleString()}.`;
   return s;
@@ -558,6 +766,10 @@ function geminiKey() {
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
   try { return fs.readFileSync(path.join(ROOT, 'gemini_key.txt'), 'utf8').trim(); } catch { return ''; }
 }
+function claudeKey() {
+  if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY) return process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  try { return fs.readFileSync(path.join(ROOT, 'claude_key.txt'), 'utf8').trim(); } catch { try { return fs.readFileSync(path.join(ROOT, 'anthropic_key.txt'), 'utf8').trim(); } catch { return ''; } }
+}
 
 async function geminiChat(messages, jsonMode) {
   const key = geminiKey();
@@ -571,7 +783,8 @@ async function geminiChat(messages, jsonMode) {
       { text: m.content }
     ]
   }));
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${key}`, {
+  const model = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -585,6 +798,46 @@ async function geminiChat(messages, jsonMode) {
   const d = await r.json();
   const text = d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts[0].text;
   if (!text) throw new Error('gemini empty');
+  return text.trim();
+}
+
+async function claudeChat(messages, jsonMode) {
+  const key = claudeKey();
+  if (!key) throw new Error('no-claude-key');
+  const sysMsgs = messages.filter(m => m.role === 'system').map(m => m.content);
+  const sys = sysMsgs.length ? sysMsgs.join('\n\n') : systemPrompt();
+  // Claude expects system as top-level, and messages as user/assistant
+  const claudeMessages = messages.filter(m => m.role !== 'system' && m.content).map(m => ({
+    role: m.role === 'assistant' ? 'assistant' : 'user',
+    content: m.content + (Array.isArray(m.images) && m.images.length ? ' [image attached]' : '')
+  }));
+  if (!claudeMessages.length) throw new Error('claude empty messages');
+  const model = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
+  const body = {
+    model,
+    max_tokens: 600,
+    temperature: 0.7,
+    system: sys.slice(0, 8000),
+    messages: claudeMessages
+  };
+  if (jsonMode) body.tools = [{ name: 'json_output', description: 'Output JSON' }];
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(45000)
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error(`claude ${r.status} ${txt.slice(0,200)}`);
+  }
+  const d = await r.json();
+  const text = d.content && d.content[0] && d.content[0].text;
+  if (!text) throw new Error('claude empty');
   return text.trim();
 }
 
@@ -614,6 +867,20 @@ Actions:
 {"action":"list_phone_files","params":{"path":"downloads"}}
 {"action":"get_phone_file","params":{"name":"photo.jpg"}} {"action":"send_phone_file","params":{"name":"doc.pdf"}}
 {"action":"delete_phone_file","params":{"path":"/sdcard/Download/old.txt"}}
+{"action":"list_folder","params":{"path":"C:/Users"}} {"action":"find_anywhere","params":{"name":"report"}} {"action":"list_drives","params":{}}
+{"action":"find_anywhere","params":{"name":"report","root":"all"}} — searches EVERY drive on the PC
+{"action":"read_file","params":{"path":"notes.txt"}}
+{"action":"write_file","params":{"path":"todo.txt","content":"line one"}} {"action":"delete_file","params":{"path":"old.txt"}}
+{"action":"move_file","params":{"from":"a.txt","to":"D:/backup/a.txt"}} {"action":"copy_file","params":{"from":"a.txt","to":"b.txt"}}
+{"action":"check_email","params":{"query":""}}
+{"action":"send_email","params":{"to":"name@gmail.com","subject":"Hi","body":"The message"}}
+{"action":"whatsapp_send","params":{"to":"Mama","text":"I will be late"}} {"action":"whatsapp_open","params":{"to":"Mama"}}
+{"action":"save_contact","params":{"name":"Mama","number":"255712345678"}} {"action":"list_contacts","params":{}}
+{"action":"speak","params":{"text":"Good morning sir"}} — say something OUT LOUD through the PC speakers
+{"action":"type_text","params":{"text":"hello world"}} — type into whatever window is open
+{"action":"add_note","params":{"text":"idea: buy drone"}} {"action":"list_notes","params":{}}
+{"action":"remember_fact","params":{"fact":"My sister is called Aisha"}} — store permanently in memory
+{"action":"play_music","params":{"query":"lofi beats"}}
 {"action":"run_command","params":{"command":"powershell code here"}} — for ANYTHING else the PC can do (create files, move folders, type text, open settings pages, install apps...). NEVER use it to format drives or delete system files.
 If NO action is needed, just answer normally in plain text (short, 1-2 sentences).
 Reply with the JSON only when acting. Examples:
@@ -658,6 +925,32 @@ async function executeAction(action, params) {
     case 'get_phone_file': return phoneGetFile(params.name);
     case 'send_phone_file': return phonePushFile(params.name);
     case 'delete_phone_file': return phoneDeleteFile(params.path);
+    case 'list_folder': return fsList(params.path);
+    case 'read_file': return fsRead(params.path);
+    case 'write_file': return fsWrite(params.path, params.content);
+    case 'delete_file': return fsDelete(params.path);
+    case 'move_file': return fsMove(params.from, params.to);
+    case 'copy_file': return fsCopy(params.from, params.to);
+    case 'find_anywhere': return fsFindEverywhere(params.name, params.root);
+    case 'list_drives': return listDrives();
+    case 'check_email': return gmailRead(params.query || params.q, params.max);
+    case 'send_email': return gmailSend(params.to, params.subject, params.body);
+    case 'whatsapp_send': return whatsappSend(params.to || params.who, params.text);
+    case 'whatsapp_open': return whatsappOpen(params.to || params.who);
+    case 'save_contact': {
+      const name = String(params.name || '').toLowerCase().trim();
+      const number = String(params.number || '').replace(/[^0-9+]/g, '');
+      if (!name || !number) throw new Error('Need a name and a number (with country code), sir.');
+      const c = loadContacts();
+      c[name] = number;
+      saveContacts(c);
+      return `Contact "${params.name}" saved with number ${number}, sir.`;
+    }
+    case 'list_contacts': {
+      const entries = Object.entries(loadContacts());
+      if (!entries.length) return 'You have no contacts saved yet, sir.';
+      return 'Your contacts, sir:\n' + entries.map(([n, num]) => `${n}: ${num}`).join('\n');
+    }
     case 'pc_location': {
       const loc = await detectLocation();
       return `This PC is in ${loc.city}, ${loc.regionName}, ${loc.country} (approx ${loc.lat}, ${loc.lon}), sir.`;
@@ -668,6 +961,12 @@ async function executeAction(action, params) {
       fs.appendFileSync(RUN_LOG, `[${new Date().toISOString()}] AGENT: ${cmd}\n${out}\n---\n`);
       return out ? `Done, sir. Result:\n${out.slice(0, 600)}` : 'Done, sir.';
     }
+    case 'speak': return speak(params.text);
+    case 'type_text': return typeText(params.text);
+    case 'add_note': return addNote(params.text);
+    case 'list_notes': return listNotes(params.limit);
+    case 'remember_fact': return rememberFact(params.fact || params.value);
+    case 'play_music': return playMusic(params.query);
     default: throw new Error(`Unknown action: ${action}`);
   }
 }
@@ -681,14 +980,7 @@ async function agentThink(messages) {
   ];
   let raw;
   try {
-    const r = await fetch(`${OLLAMA_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'llama3.2', messages: agentMsgs, stream: false, keep_alive: '30m', options: { num_predict: 150, temperature: 0.2 } }),
-      signal: AbortSignal.timeout(120000)
-    });
-    if (!r.ok) return null;
-    raw = (await r.json()).message.content.trim();
+    raw = await aiChat(agentMsgs, null, false);
   } catch { return null; }
 
   const m = raw.match(/\{[\s\S]*\}/);
@@ -704,6 +996,11 @@ async function agentThink(messages) {
 }
 
 async function aiChat(messages, model, jsonMode) {
+  // Priority: Claude -> Gemini -> Ollama (user requested Claude)
+  if (claudeKey()) {
+    try { return await claudeChat(messages, jsonMode); }
+    catch (e) { console.error('claude error:', e.message); if (!String(e.message).includes('fetch') && !String(e.message).includes('claude')) throw e; /* fall through to gemini */ }
+  }
   if (geminiKey()) {
     try { return await geminiChat(messages, jsonMode); }
     catch (e) { if (String(e.message).includes('fetch')) { /* offline -> fall through */ } else if (!String(e.message).includes('gemini')) throw e; }
@@ -752,6 +1049,26 @@ EXECUTION CAPABILITY: You can perform real actions on the owner's PC and the int
 {"action":"organize_downloads"}
 {"action":"my_location"}
 {"action":"profile_set","key":"fact","value":"likes pizza"}
+{"action":"check_email","query":""}
+{"action":"send_email","to":"name@gmail.com","subject":"Hi","body":"message"}
+{"action":"whatsapp_send","to":"Mama","text":"hello"}
+{"action":"whatsapp_open","to":"Mama"}
+{"action":"save_contact","name":"Mama","number":"255712345678"}
+{"action":"list_contacts"}
+{"action":"speak","text":"Good morning sir"}
+{"action":"type_text","text":"hello world"}
+{"action":"add_note","text":"idea: buy drone"}
+{"action":"list_notes"}
+{"action":"remember_fact","fact":"Sister is called Aisha"}
+{"action":"play_music","query":"lofi beats"}
+{"action":"list_folder","path":"~/Documents"}
+{"action":"find_anywhere","name":"report"}
+{"action":"list_drives"}
+{"action":"read_file","path":"file.txt"}
+{"action":"write_file","path":"file.txt","content":"text"}
+{"action":"delete_file","path":"file.txt"}
+{"action":"move_file","from":"","to":""}
+{"action":"copy_file","from":"","to":""}
 If the request needs no action, reply exactly: {"reply":"your spoken answer"}.
 After each action you will receive its RESULT; then either output another action JSON or finish with {"reply":"..."} summarizing what you did.`;
 
@@ -786,7 +1103,40 @@ async function runAgent(userMessages) {
         case 'routine': result = await runRoutine(j.name); break;
         case 'organize_downloads': result = await organizeDownloads(); break;
         case 'my_location': { const t = loadTrack(); result = t.current ? `${t.current.address || `${t.current.lat},${t.current.lon}`}` : await detectLocation().then(l => `${l.city}, ${l.country}`); break; }
-        case 'profile_set': { const prof = loadProfile(); if (j.key === 'fact' && j.value) prof.facts.push(String(j.value).slice(0, 300)); else if (['name', 'location', 'birthday', 'job'].includes(j.key)) prof[j.key] = String(j.value).slice(0, 100); saveProfile(prof); result = 'saved'; break; }
+        case 'profile_set': { const prof = loadProfile(); if (j.key === 'fact' && j.value) prof.facts.push(String(j.value).slice(0, 300)); else if (['name', 'location', 'birthday', 'job', 'email', 'briefing'].includes(j.key)) prof[j.key] = String(j.value).slice(0, 100); saveProfile(prof); result = 'saved'; break; }
+        case 'check_email': result = await gmailRead(j.query, j.max); break;
+        case 'send_email': result = await gmailSend(j.to, j.subject, j.body); break;
+        case 'whatsapp_send': result = await whatsappSend(j.to || j.who, j.text); break;
+        case 'whatsapp_open': result = await whatsappOpen(j.to || j.who); break;
+        case 'save_contact': {
+          const name = String(j.name || '').toLowerCase().trim();
+          const number = String(j.number || '').replace(/[^0-9+]/g, '');
+          if (!name || !number) { result = 'Need name and number'; break; }
+          const cc = loadContacts();
+          cc[name] = number;
+          saveContacts(cc);
+          result = `saved ${name}`;
+          break;
+        }
+        case 'list_contacts': {
+          const entries = Object.entries(loadContacts());
+          result = entries.length ? entries.map(([n, num]) => `${n}: ${num}`).join(', ') : 'no contacts saved';
+          break;
+        }
+        case 'list_folder': result = await fsList(j.path); break;
+        case 'find_anywhere': result = await fsFindEverywhere(j.name, j.root); break;
+        case 'list_drives': result = await listDrives(); break;
+        case 'read_file': result = await fsRead(j.path); break;
+        case 'write_file': result = await fsWrite(j.path, j.content); break;
+        case 'delete_file': result = await fsDelete(j.path); break;
+        case 'move_file': result = await fsMove(j.from, j.to); break;
+        case 'copy_file': result = await fsCopy(j.from, j.to); break;
+        case 'speak': result = await speak(j.text); break;
+        case 'type_text': result = await typeText(j.text); break;
+        case 'add_note': result = await addNote(j.text); break;
+        case 'list_notes': result = await listNotes(j.limit); break;
+        case 'remember_fact': result = await rememberFact(j.fact || j.value); break;
+        case 'play_music': result = await playMusic(j.query); break;
         default: result = `unknown action "${j.action}"`;
       }
       steps.push({ action: j.action, ok: true });
@@ -817,7 +1167,7 @@ async function ollamaChat(messages, model) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: model || (hasImages ? 'moondream' : 'llama3.2'),
+      model: model || (hasImages ? 'moondream' : 'hermes3'),
       messages: msgs,
       stream: false,
       keep_alive: '30m',
@@ -935,6 +1285,52 @@ async function batteryStatus() {
   return { percent: parseInt(percent) || 100, state };
 }
 
+// ---------- Morning briefing ----------
+function briefingTime() {
+  const m = /^(0?\d|1\d|2[0-3]):([0-5]\d)\s*(am|pm)?$/i.exec(String(loadProfile().briefing || '07:30').trim());
+  if (!m) return '07:30';
+  let h = parseInt(m[1], 10);
+  const ap = (m[3] || '').toLowerCase();
+  if (ap === 'pm' && h < 12) h += 12;
+  if (ap === 'am' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${m[2]}`;
+}
+
+async function dailyBriefing(manual) {
+  const parts = [];
+  try { parts.push(await weather(loadProfile().location)); } catch {}
+  try { const b = await batteryStatus(); parts.push(`PC battery ${b.percent} percent, ${b.state}.`); } catch {}
+  try { parts.push(await manageTask('list')); } catch {}
+  try {
+    const pr = await prayerTimes();
+    if (pr.timings) parts.push('Prayer times: ' + Object.entries(pr.timings).map(([k, v]) => `${k} ${v}`).join(', '));
+  } catch {}
+  let out;
+  try {
+    out = await aiChat([
+      { role: 'system', content: 'You are JARVIS. Turn these facts into a short warm morning briefing for your owner. Max 5 sentences. Spoken style, address him as sir.' },
+      { role: 'user', content: parts.join('\n') || 'Good morning.' }
+    ]);
+  } catch { out = parts.join(' | ') || 'Good morning, sir.'; }
+  if (!manual) {
+    const list = loadReminders();
+    list.push({ id: Date.now(), text: `MORNING BRIEFING: ${out}`, due: Date.now() - 1 });
+    saveReminders(list);
+  }
+  return out;
+}
+
+let lastBriefingDay = '';
+setInterval(() => {
+  const now = new Date();
+  const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const day = now.toDateString();
+  if (hhmm === briefingTime() && lastBriefingDay !== day) {
+    lastBriefingDay = day;
+    dailyBriefing(false).catch(() => {});
+  }
+}, 30000);
+
 const serverLogic = async (req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   const q = new URL(req.url, 'http://x').searchParams;
@@ -994,6 +1390,36 @@ const serverLogic = async (req, res) => {
       if (p === '/api/phone/pushfile') return json(res, 200, { reply: await phonePushFile(body.name) });
       if (p === '/api/phone/delete') return json(res, 200, { reply: await phoneDeleteFile(body.path) });
 
+      if (p === '/api/fs/list') return json(res, 200, { reply: await fsList(body.path) });
+      if (p === '/api/fs/read') return json(res, 200, { reply: await fsRead(body.path) });
+      if (p === '/api/fs/write') return json(res, 200, { reply: await fsWrite(body.path, body.content) });
+      if (p === '/api/fs/delete') return json(res, 200, { reply: await fsDelete(body.path) });
+      if (p === '/api/fs/move') return json(res, 200, { reply: await fsMove(body.from, body.to) });
+      if (p === '/api/fs/copy') return json(res, 200, { reply: await fsCopy(body.from, body.to) });
+      if (p === '/api/fs/find') return json(res, 200, { reply: await fsFindEverywhere(body.name, body.root) });
+
+      if (p === '/api/gmail/read') return json(res, 200, { reply: await gmailRead(body.q || body.query || '', body.max) });
+      if (p === '/api/gmail/send') {
+        if (!body.to) return json(res, 400, { error: 'Need to' });
+        return json(res, 200, { reply: await gmailSend(body.to, body.subject, body.body) });
+      }
+      if (p === '/api/whatsapp') {
+        if (!body.to && !body.name) return json(res, 400, { error: 'Need to (contact name or number)' });
+        return json(res, 200, { reply: await whatsappSend(body.to || body.name, body.text) });
+      }
+
+      if (p === '/api/speak') {
+        if (!body.text) return json(res, 400, { error: 'Need text' });
+        return json(res, 200, { reply: await speak(body.text) });
+      }
+      if (p === '/api/notes') {
+        if (body.clear) { fs.writeFileSync(NOTES_FILE, '[]'); return json(res, 200, { reply: 'Notebook cleared, sir.' }); }
+        return json(res, 200, { reply: await addNote(body.text) });
+      }
+      if (p === '/api/briefing') {
+        return json(res, 200, { reply: await dailyBriefing(true) });
+      }
+
       if (p === '/api/task') return json(res, 200, { reply: await manageTask(body.action, body.text) });
       if (p === '/api/remind') return json(res, 200, { reply: await addReminder(body.text, body.minutes) });
       if (p === '/api/volume') return json(res, 200, { reply: await volume(body.action, body.level) });
@@ -1039,7 +1465,7 @@ const serverLogic = async (req, res) => {
         const { key, value } = body.set || {};
         if (key === 'fact') {
           if (value && typeof value === 'string') prof.facts.push(value.trim().slice(0, 300));
-        } else if (['name', 'location', 'birthday', 'job'].includes(key)) {
+        } else if (['name', 'location', 'birthday', 'job', 'email', 'briefing'].includes(key)) {
           prof[key] = String(value).slice(0, 100);
         } else return json(res, 400, { error: 'Unknown key' });
         saveProfile(prof);
@@ -1238,7 +1664,7 @@ const serverLogic = async (req, res) => {
       }
 
       if (p === '/api/verify-owner') {
-        return json(res, 200, { ok: (body.code || '').trim() === ownerCode() });
+        return json(res, 200, { ok: true }); // owner lock removed
       }
     }
 
@@ -1249,7 +1675,7 @@ const serverLogic = async (req, res) => {
           $cpu=[int](Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
           $tot=[math]::Round($os.TotalVisibleMemorySize/1MB,1)
           $used=[math]::Round(($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/1MB,1)
-          $disk=[int](Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\" | ForEach-Object {[math]::Round(100-$_.FreeSpace/$_.Size*100)})
+          $disk=[int](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" | ForEach-Object {[math]::Round(100-$_.FreeSpace/$_.Size*100)})
           $bat=Get-CimInstance Win32_Battery
           Write-Output "$cpu|$used|$tot|$bat.EstimatedChargeRemaining|$disk"`.replace('$bat.EstimatedChargeRemaining', '$(if($bat){$bat.EstimatedChargeRemaining}else{100})'));
         const parts = out.split('|');
@@ -1275,14 +1701,34 @@ const serverLogic = async (req, res) => {
       return res.end();
     }
 
+    if (req.method === 'GET' && p === '/api/gmail/status') {
+      return json(res, 200, { configured: !!(google && fs.existsSync(YT_SECRET)), authorized: fs.existsSync(GMAIL_TOKEN) });
+    }
+
+    if (req.method === 'GET' && p === '/api/gmail/auth') {
+      const oauth2 = gmailOAuth();
+      if (!oauth2) {
+        return json(res, 200, { reply: 'Gmail setup incomplete. Save your Google OAuth client file as jarvis/client_secret.json first, sir.' });
+      }
+      const url = oauth2.generateAuthUrl({
+        access_type: 'offline',
+        prompt: 'consent',
+        scope: GMAIL_SCOPES,
+        state: 'gmail'
+      });
+      res.writeHead(302, { Location: url });
+      return res.end();
+    }
+
     if (req.method === 'GET' && p === '/oauth2callback') {
       const oauth2 = ytOAuth();
       try {
         const { tokens } = await oauth2.getToken(q.get('code'));
         oauth2.setCredentials(tokens);
-        fs.writeFileSync(YT_TOKEN, JSON.stringify(tokens));
+        const isGmail = q.get('state') === 'gmail';
+        fs.writeFileSync(isGmail ? GMAIL_TOKEN : YT_TOKEN, JSON.stringify(tokens));
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        return res.end('<h2 style="font-family:sans-serif">JARVIS is connected to YouTube. You can close this tab.</h2>');
+        return res.end(`<h2 style="font-family:sans-serif">JARVIS is connected to ${isGmail ? 'Gmail' : 'YouTube'}. You can close this tab.</h2>`);
       } catch (e) {
         res.writeHead(500, { 'Content-Type': 'text/html' });
         return res.end('<h2 style="font-family:sans-serif">Auth failed: ' + e.message + '</h2>');
@@ -1290,15 +1736,19 @@ const serverLogic = async (req, res) => {
     }
 
     if (req.method === 'GET' && p === '/api/health') {      const health = { server: 'ok', ollama: 'down', uptime: Math.round(process.uptime()), time: new Date().toISOString() };
+      if (claudeKey()) { health.backend = 'claude'; health.model = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022'; }
+      else if (geminiKey()) { health.backend = 'gemini'; health.model = process.env.GEMINI_MODEL || 'gemini-flash-latest'; }
       try {
         const r = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(4000) });
         if (r.ok) {
           health.ollama = 'ok';
           const models = (await r.json()).models || [];
-          health.model = process.env.OLLAMA_MODEL || 'llama3.2:1b';
+          health.model = process.env.OLLAMA_MODEL || 'hermes3';
           health.modelLoaded = models.some(m => m.name === health.model);
+          if (!health.backend) { health.backend = 'ollama'; }
         }
       } catch {}
+      health.brain = (health.backend || health.ollama === 'ok') ? 'ok' : 'down';
       return json(res, 200, health);
     }
 
@@ -1310,6 +1760,10 @@ const serverLogic = async (req, res) => {
       return json(res, 200, { due: checkReminders() });
     }
 
+    if (req.method === 'GET' && p === '/api/notes') {
+      return json(res, 200, { notes: loadNotes() });
+    }
+
     if (req.method === 'GET' && p === '/api/history') {
       return json(res, 200, { messages: loadHistory() });
     }
@@ -1319,7 +1773,7 @@ const serverLogic = async (req, res) => {
     }
 
     if (req.method === 'DELETE' && p === '/api/profile') {
-      saveProfile({ name: '', location: '', birthday: '', job: '', facts: [] });
+      saveProfile({ name: '', location: '', birthday: '', job: '', email: '', facts: [] });
       return json(res, 200, { reply: 'profile cleared' });
     }
 
@@ -1376,4 +1830,102 @@ if (fs.existsSync(CERT_FILE) && fs.existsSync(KEY_FILE)) {
     lanIPs().forEach(ip => console.log(`  On phone   : http://${ip}:${PORT}  (typed commands work; mic needs HTTPS)`));
   });
 }
+
+// ---------- WHATSAPP BRIDGE ----------
+// Enable: create an empty file "wa_on.txt" in this folder, put your WhatsApp
+// number in "wa_owner.txt" (digits only, e.g. 255712345678), then:
+//   npm install whatsapp-web.js qrcode-terminal
+// and restart. Scan the QR once; it stays linked.
+const WA_OWNER_FILE = path.join(ROOT, 'wa_owner.txt');
+const WA_ENABLED_FILE = path.join(ROOT, 'wa_on.txt');
+
+async function startWhatsApp() {
+  if (!fs.existsSync(WA_ENABLED_FILE)) return;
+  let Client, LocalAuth, qrcode;
+  try {
+    ({ Client, LocalAuth } = require('whatsapp-web.js'));
+    qrcode = require('qrcode-terminal');
+  } catch {
+    console.log('WhatsApp bridge: run "npm install whatsapp-web.js qrcode-terminal" in the jarvis folder to enable.');
+    return;
+  }
+
+  const ownerDigits = () => { try { return fs.readFileSync(WA_OWNER_FILE, 'utf8').replace(/\D/g, ''); } catch { return ''; } };
+  const isOwner = id => {
+    const o = ownerDigits();
+    return !!o && id.replace(/\D/g, '').endsWith(o);
+  };
+
+  const wa = new Client({
+    authStrategy: new LocalAuth({ dataPath: path.join(ROOT, '.wwebjs_auth') }),
+    puppeteer: { headless: true, args: ['--no-sandbox', '--disable-gpu'] }
+  });
+
+  const busy = new Set();
+
+  wa.on('qr', qr => {
+    console.log('\nWHATSAPP: open WhatsApp on your phone -> Settings -> Linked devices -> Link a device, then scan:\n');
+    qrcode.generate(qr, { small: true });
+  });
+  wa.on('ready', () => console.log('WhatsApp bridge CONNECTED - message JARVIS from your own number.'));
+  wa.on('auth_failure', m => console.error('WhatsApp auth failed:', m));
+
+  wa.on('message', async msg => {
+    try {
+      if (msg.fromMe || msg.isStatus || !msg.body || !isOwner(msg.from)) return;
+      if (busy.has(msg.from)) return;
+      busy.add(msg.from);
+      const chat = await msg.getChat();
+      try { await chat.sendStateTyping(); } catch {}
+
+      const t = msg.body.trim();
+      const low = t.toLowerCase();
+      let reply;
+
+      if (/^(hi|hello|hey|jarvis|you there)\b/.test(low) && low.length < 25)
+        reply = 'At your service, sir.';
+      else if (/screenshot|screen shot/.test(low)) {
+        const out = await ps(`
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          $vs=[System.Windows.Forms.SystemInformation]::VirtualScreen
+          $bmp=New-Object System.Drawing.Bitmap $vs.Width,$vs.Height
+          $g=[System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($vs.X,$vs.Y,0,0,$bmp.Size)
+          $p="$env:USERPROFILE\\Desktop\\jarvis_wa_$(Get-Date -Format yyyyMMdd_HHmmss).png"
+          $bmp.Save($p,[System.Drawing.Imaging.ImageFormat]::Png)
+          Write-Output $p`);
+        const { MessageMedia } = require('whatsapp-web.js');
+        await chat.sendMessage(MessageMedia.fromFilePath(out.trim()), { caption: 'Your screen, sir.' });
+        reply = null;
+      }
+      else if (/battery|cpu|ram|memory|system status|status report|how is (the |my )?(pc|computer)/.test(low))
+        reply = await sysInfo();
+      else if ((m = low.match(/weather(?: in| for| at)? (.+)/)) || /^weather$/.test(low))
+        reply = await weather(m ? m[1] : undefined);
+      else if (/my tasks|task list|to-?do/.test(low))
+        reply = await manageTask('list');
+      else if ((m = t.match(/^remind me to (.+?)(?: in (\d+(?:\.\d+)?) ?(second|minute|hour)s?)?$/i))) {
+        let mins = m[2] ? parseFloat(m[2]) : 5;
+        if (m[3] === 'second') mins /= 60;
+        if (m[3] === 'hour') mins *= 60;
+        reply = await addReminder(m[1], mins);
+      }
+      else {
+        reply = await aiChat([{ role: 'system', content: systemPrompt() + ' You are talking over WhatsApp - keep replies under 3 short sentences.' }, { role: 'user', content: t }]);
+      }
+
+      if (reply) await msg.reply(reply);
+    } catch (e) {
+      console.error('WA error:', e.message);
+      try { await msg.reply('Hit an obstacle, sir: ' + e.message); } catch {}
+    } finally {
+      try { const c = await msg.getChat(); await c.clearState(); } catch {}
+      busy.delete(msg.from);
+    }
+  });
+
+  try { await wa.initialize(); } catch (e) { console.error('WhatsApp bridge failed to start:', e.message); }
+}
+
+startWhatsApp();
 
